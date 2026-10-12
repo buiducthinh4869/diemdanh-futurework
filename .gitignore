@@ -1,0 +1,18 @@
+# Dữ liệu cá nhân – KHÔNG đưa lên repo công khai
+*.xlsx
+*.csv
+apps-script/RosterData.gs
+
+# Khóa/token đăng nhập clasp
+.clasp.json
+.clasprc.json
+
+# Nhật ký triển khai (có ADMIN_KEY, URL nội bộ)
+DEPLOY_LOG.md
+
+# Khác
+__pycache__/
+*.pyc
+node_modules/
+.claude/
+*.log

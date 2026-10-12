@@ -1,0 +1,132 @@
+<!doctype html>
+<html lang="vi">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+  <meta name="robots" content="noindex, nofollow">
+  <meta name="color-scheme" content="light">
+  <meta name="theme-color" content="#0b6b3a">
+  <title>Điểm danh khóa học AI – Futurework</title>
+  <link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 64 64'%3E%3Crect width='64' height='64' rx='14' fill='%230b6b3a'/%3E%3Cpath d='M16 34l12 12 21-24' fill='none' stroke='%23fff' stroke-width='8' stroke-linecap='round' stroke-linejoin='round'/%3E%3C/svg%3E">
+  <link rel="stylesheet" href="style.css">
+</head>
+<body>
+<main class="wrap">
+
+  <header class="head">
+    <h1>Điểm danh khóa học AI – Futurework</h1>
+    <p class="info" aria-live="polite">
+      <span id="infoDate">Hôm nay: …</span>
+      <span class="sep" aria-hidden="true">·</span>
+      <span id="infoDot">Đợt: …</span>
+      <span class="sep" aria-hidden="true">·</span>
+      <span id="infoTime">…</span>
+    </p>
+    <p><span class="badge badge-wait" id="badge">Đang kiểm tra…</span></p>
+    <p class="fake" id="fakeBanner" hidden>⚠ CHẾ ĐỘ THỬ NGHIỆM – hệ thống đang dùng giờ giả lập</p>
+  </header>
+
+  <!-- Đang tải -->
+  <section id="vLoading" class="card center" aria-live="polite">
+    <div class="spinner" aria-hidden="true"></div>
+    <p>Đang kết nối…</p>
+  </section>
+
+  <!-- Đóng cửa: chỉ hiện thông báo, không có ô tìm kiếm / nút điểm danh -->
+  <section id="vClosed" class="card center" hidden>
+    <div class="big-ico" aria-hidden="true">⏰</div>
+    <p id="closedMsg" class="closed-msg"></p>
+  </section>
+
+  <!-- Lỗi kết nối -->
+  <section id="vError" class="card center" hidden role="alert">
+    <div class="big-ico" aria-hidden="true">⚠️</div>
+    <p id="errorMsg" class="closed-msg"></p>
+    <button type="button" class="btn btn-primary" id="btnRetry">Thử lại</button>
+  </section>
+
+  <!-- Tìm kiếm -->
+  <section id="vSearch" class="card" hidden>
+    <label for="q" class="lbl">Nhập tên của bạn</label>
+    <div class="combo">
+      <input id="q" type="text" inputmode="text" autocomplete="off" autocorrect="off" autocapitalize="none"
+             spellcheck="false" enterkeyhint="go" placeholder="Ví dụ: Thịnh, Nguyễn Thị Lan, TUAF0012"
+             role="combobox" aria-expanded="false" aria-controls="list" aria-autocomplete="list" aria-haspopup="listbox">
+      <div id="listBox" class="listbox" hidden>
+        <ul id="list" role="listbox" aria-label="Gợi ý tên"></ul>
+        <div id="more" class="more" hidden></div>
+      </div>
+    </div>
+    <p class="hint" id="hint">Gõ tên có dấu hoặc không dấu đều được. Dùng phím ↑ ↓ rồi Enter, hoặc chạm vào tên của bạn.</p>
+    <button type="button" class="link" id="btnNotFound">Không tìm thấy tên của bạn?</button>
+  </section>
+
+  <!-- Xác nhận -->
+  <section id="vConfirm" class="card" hidden>
+    <h2>Đây có phải là bạn không?</h2>
+    <dl class="kv" id="confirmInfo"></dl>
+    <button type="button" class="btn btn-primary" id="btnConfirm">Xác nhận điểm danh</button>
+    <button type="button" class="btn btn-ghost" id="btnNotMe">Không phải tôi</button>
+  </section>
+
+  <!-- Tự đăng ký -->
+  <section id="vRegister" class="card" hidden>
+    <h2>Tự điền thông tin</h2>
+    <p class="hint">Dành cho người chưa có tên trong danh sách. Sau khi gửi, bạn sẽ được điểm danh luôn cho hôm nay.</p>
+    <form id="regForm" novalidate>
+      <label class="fld"><span>Họ và tên <i>*</i></span>
+        <input id="rName" name="name" type="text" autocomplete="name" maxlength="100" required></label>
+      <label class="fld"><span>Trường <i>*</i></span>
+        <select id="rSchool" name="school" required>
+          <option value="">— Chọn trường —</option>
+          <option value="TUAF">TUAF</option>
+          <option value="TUEBA">TUEBA</option>
+        </select></label>
+      <label class="fld"><span>Khoa <i>*</i></span>
+        <select id="rKhoa" name="khoa" required disabled><option value="">— Chọn trường trước —</option></select></label>
+      <label class="fld" id="rKhoaOtherWrap" hidden><span>Tên khoa của bạn <i>*</i></span>
+        <input id="rKhoaOther" type="text" maxlength="120"></label>
+      <label class="fld"><span>Bộ môn</span>
+        <input id="rBomon" name="bomon" type="text" maxlength="120"></label>
+      <fieldset class="fld">
+        <legend>Đợt học <i>*</i></legend>
+        <label class="radio"><input type="radio" name="dot" value="Đợt 1"> Đợt 1</label>
+        <label class="radio"><input type="radio" name="dot" value="Đợt 2"> Đợt 2</label>
+      </fieldset>
+      <label class="fld"><span>Năm sinh</span>
+        <input id="rYear" name="year" type="text" inputmode="numeric" maxlength="4" placeholder="Ví dụ: 1985"></label>
+      <label class="fld"><span>Giới tính</span>
+        <select id="rGender" name="gender">
+          <option value="">— Không chọn —</option><option>Nam</option><option>Nữ</option><option>Khác</option>
+        </select></label>
+      <label class="fld"><span>Ngạch giảng viên</span>
+        <select id="rRank" name="rank">
+          <option value="">— Không chọn —</option><option>GV</option><option>GVC</option><option>GVCC</option><option>GVTH</option><option>Khác</option>
+        </select></label>
+      <label class="fld"><span>Số điện thoại</span>
+        <input id="rPhone" name="phone" type="tel" inputmode="tel" autocomplete="tel" maxlength="20"></label>
+      <p class="form-err" id="regErr" role="alert" hidden></p>
+      <button type="submit" class="btn btn-primary" id="btnReg">Gửi và điểm danh</button>
+      <button type="button" class="btn btn-ghost" id="btnRegBack">← Quay lại tìm kiếm</button>
+    </form>
+  </section>
+
+  <!-- Kết quả -->
+  <section id="vResult" class="card result" hidden aria-live="assertive">
+    <div class="big-ico" id="resIcon" aria-hidden="true">✔</div>
+    <h2 id="resTitle"></h2>
+    <p class="res-name" id="resName"></p>
+    <p class="res-when" id="resWhen"></p>
+    <p class="res-note" id="resNote" hidden></p>
+    <button type="button" class="btn btn-light" id="btnAgain">Điểm danh cho người khác</button>
+  </section>
+
+  <footer class="foot">Giờ và ngày do máy chủ quyết định, không phụ thuộc đồng hồ điện thoại.</footer>
+</main>
+
+<noscript><p style="padding:16px">Trang này cần bật JavaScript để điểm danh.</p></noscript>
+<script src="config.js"></script>
+<script src="search.js"></script>
+<script src="app.js"></script>
+</body>
+</html>
