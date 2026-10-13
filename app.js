@@ -277,7 +277,7 @@
     var already = res.status === 'already';
     card.className = 'card result' + (already ? ' info-state' : '');
     $('resIcon').textContent = already ? 'ℹ' : '✔';
-    $('resTitle').textContent = already ? 'Bạn đã điểm danh hôm nay lúc ' + res.time : 'Bạn đã điểm danh thành công';
+    $('resTitle').textContent = already ? 'Bạn đã điểm danh hôm nay' + (res.time ? ' lúc ' + res.time : '') :'Bạn đã điểm danh thành công';
     $('resName').textContent = p.name || '';
     $('resWhen').textContent = already ? 'Ngày ' + res.date : 'Ngày ' + res.date + ' · lúc ' + res.time;
     var notes = [];

@@ -28,10 +28,39 @@ Người dùng tìm tên (không phân biệt hoa/thường và dấu; gõ tên,
 | `TuDangKy` | Người tự đăng ký (có số điện thoại) |
 | `Log` | Mọi lượt điểm danh của mọi ngày (dạng dài) để phân tích bằng Stata/Python: `Timestamp, Ngay, ID, Ho ten, Truong, Khoa, Bo mon, Dot dang ky, Dot hien hanh, Dung dot (1/0), study_arm, Nguon, Ghi chu` |
 | `DD_yyyy-MM-dd` | Điểm danh trong ngày, ghi thời gian thực (cùng cột với `Log`) |
-| `TH_yyyy-MM-dd` | Tổng hợp của ngày: A) số liệu tổng, B) đi sai đợt, C) vắng mặt, D) tự đăng ký |
+| `TH_yyyy-MM-dd` | Tổng hợp của ngày: A) số liệu tổng (có dòng *Có lớp hôm nay*), B) đi sai đợt, C) vắng mặt, D) tự đăng ký |
+| `BC_dd-MM-yyyy` | Báo cáo cho lãnh đạo của ngày (xem bên dưới), tạo cùng lúc với `TH_` |
 | `TongHop_LuyKe` | Mỗi người một dòng: số buổi có mặt đúng đợt, số buổi đáng lẽ phải đi, tỷ lệ chuyên cần, số buổi đi sai đợt |
 
 > Múi giờ của Google Sheet phải là `Asia/Ho_Chi_Minh` (hàm `setup()` tự đặt). Nếu lệch, Sheets sẽ diễn giải ngày/giờ sai vài giờ.
+
+## Trường “có lớp” trong ngày
+
+Lớp học vào thứ Bảy/Chủ nhật và **mỗi trường học vào một ngày riêng**, không có lịch cố định. Quy ước duy nhất, dùng ở `TH_`, `BC_` và `TongHop_LuyKe`:
+
+> Trường X **có lớp** vào ngày D khi và chỉ khi có ít nhất 1 lượt điểm danh của học viên thuộc trường X vào ngày D (tính cả người tự đăng ký và dữ liệu nhập bù).
+
+- Người *đáng lẽ phải đi* ngày D = học viên thuộc **đợt hiện hành** và thuộc **trường có lớp** ngày D. Trường không có lớp thì không ai bị tính vắng; các chỉ tiêu vắng/tỷ lệ của trường đó ghi `–`.
+- `TongHop_LuyKe`: *số buổi đáng lẽ phải đi* của một người = số ngày thuộc đợt của người đó mà trường của người đó có lớp.
+- `TH_`/`BC_` chỉ được tạo khi ngày đó có ít nhất 1 lượt điểm danh của TUAF/TUEBA.
+- Hệ quả cần lưu ý: một lượt điểm danh vào ngày thường (kể cả để thử) cũng làm trường đó “có lớp” hôm ấy; dọn bằng `adminDeleteDay`.
+
+## Sheet báo cáo `BC_dd-MM-yyyy`
+
+Mỗi ngày có lớp có thêm một sheet (ví dụ `BC_10-10-2026`), ghi **giá trị tĩnh** (không công thức/pivot), ghi đè khi chạy lại.
+
+| Cột | Tên | Nội dung |
+|---|---|---|
+| A | `ID` | ID học viên (người tự đăng ký: `TUAF-N001`…) |
+| B | `Ho_ten` | Họ và tên |
+| C | `Truong` | `TUAF` / `TUEBA` |
+| D | `Ngay_hoc` | Ngày học, dạng **chữ** `dd/MM/yyyy` |
+| E | `Diem_danh` | `Y` có mặt, `N` vắng |
+| F | `Dot` | Đợt đăng ký của học viên: `1` hoặc `2` (số) |
+
+- **Khối 1**: mọi học viên thuộc đợt hiện hành của các trường có lớp (Y hoặc N). **Khối 2**: người có mặt nhưng không thuộc đợt hiện hành (luôn `Y`).
+- Sắp xếp: Trường (TUAF trước) → Khối 1 trước Khối 2 → ID tăng dần (ID tự đăng ký xếp cuối). Dòng `N` được tô nền nhạt.
+- Bảng đếm bên phải từ ô `N3` (`Truong` / `Count of Diem_danh`): số dòng `Y` của từng trường **có lớp** và `Grand Total` (tính cả người đi sai đợt).
 
 ## Chạy bù tổng hợp một ngày
 
@@ -41,7 +70,22 @@ Trong trình soạn thảo Apps Script: chọn hàm `buildDailySummary` rồi g�
 <WEB_APP_URL>?action=adminSummary&key=<ADMIN_KEY>&date=2026-10-12
 ```
 
-Chỉ tạo `TH_` khi ngày đó thuộc một đợt **và** có ít nhất 1 lượt điểm danh; chạy lại sẽ ghi đè. Bước này cũng tự bù các dòng thiếu trong `Log` (xem *Hạn chế*).
+Tạo cả `TH_` lẫn `BC_` khi ngày đó thuộc một đợt **và** có ít nhất 1 lượt điểm danh; chạy lại sẽ ghi đè. Bước này cũng tự bù các dòng thiếu trong `Log` (xem *Hạn chế*) và tính lại `TongHop_LuyKe`.
+
+## Nhập bù điểm danh (`adminImport`)
+
+Dùng khi cần nhập lại các buổi đã học trước khi hệ thống chạy. Gửi POST JSON (cần `ADMIN_KEY`), chỉ gồm các lượt **có mặt**; vắng mặt được hệ thống tự suy ra:
+
+```json
+{ "action": "adminImport", "key": "<ADMIN_KEY>",
+  "items": [ { "date": "2026-10-10", "id": "<ID học viên>" }, ... ] }
+```
+
+- Kiểm tra trước: nếu có ngày không thuộc đợt nào hoặc ID không có trong `DanhSach`, **cả lô bị từ chối và không ghi gì** (phản hồi `code: "invalid"` kèm danh sách dòng lỗi).
+- Dùng `LockService`; bỏ qua lượt đã có (khóa *Ngày + ID*) nên chạy lại không bị trùng (`added` / `skipped` trong phản hồi).
+- Mỗi lượt ghi vào `DD_yyyy-MM-dd` và `Log` với `Timestamp` để trống và `Nguon = Nhập bù`.
+- Xong thì chạy `adminSummary` cho từng ngày để tạo `TH_`, `BC_` và cập nhật `TongHop_LuyKe`.
+- Dữ liệu nhập bù là dữ liệu cá nhân: **không** đưa file nguồn lên GitHub (`*.csv` đã nằm trong `.gitignore`).
 
 ## Hàm quản trị
 
@@ -51,12 +95,13 @@ Gọi qua web (GET hoặc POST JSON), đều cần `key=<ADMIN_KEY>` (lưu trong
 |---|---|---|
 | `adminCheckin` | `date`, `id` | Điểm danh bù cho một người (ghi chú `admin`) |
 | `adminDelete` | `date`, `id` | Xóa một lượt điểm danh (cả `DD_` và `Log`) |
-| `adminSummary` | `date` | Chạy bù tổng hợp |
+| `adminSummary` | `date` | Chạy bù tổng hợp (`TH_` + `BC_` + `TongHop_LuyKe`) |
+| `adminImport` | `items` = `[{date, id}]` | Nhập bù lượt điểm danh (xem *Nhập bù điểm danh*) |
 | `adminResyncLog` | `date` | Bù các dòng `Log` còn thiếu so với `DD_` |
-| `adminExport` | `sheet` (mặc định `DanhSach`) | Xuất một tab dạng JSON (`DanhSach`, `TuDangKy`, `Log`, `TongHop_LuyKe`, `DD_…`, `TH_…`) |
-| `adminDeleteDay` | `date`, `confirm=yes` | Xóa toàn bộ điểm danh của một ngày (dọn dữ liệu thử) |
-| `adminDeleteTab` | `name` | Xóa tab `TH_…` hoặc `DD_…` |
-| `adminRemovePerson` | `id` (dạng `TUAF-N001`) | Xóa hẳn một người tự đăng ký khỏi mọi tab, đặt lại bộ đếm |
+| `adminExport` | `sheet` (mặc định `DanhSach`) | Xuất một tab dạng JSON (`DanhSach`, `TuDangKy`, `Log`, `TongHop_LuyKe`, `DD_…`, `TH_…`, `BC_…`) |
+| `adminDeleteDay` | `date`, `confirm=yes` | Xóa toàn bộ điểm danh của một ngày: `DD_`, `TH_`, `BC_` và các dòng trong `Log` (dọn dữ liệu thử) |
+| `adminDeleteTab` | `name` | Xóa tab `TH_…`, `DD_…` hoặc `BC_…` |
+| `adminRemovePerson` | `id` (dạng `TUAF-N001`) | Xóa hẳn một người tự đăng ký khỏi mọi tab, đặt lại bộ đếm, tính lại `TongHop_LuyKe` |
 | `adminRebuild` | – | Tính lại `TongHop_LuyKe` |
 | `adminClearCache` | – | Xóa bộ nhớ đệm (sau khi sửa tay `DanhSach`/`DD_`) |
 | `adminSetup` | – | Chạy lại `setup()` (an toàn, không trùng dữ liệu) |
