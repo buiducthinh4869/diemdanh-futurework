@@ -16,33 +16,41 @@ Web điểm danh cho khóa học AI dành cho giảng viên (TUAF, TUEBA), dùng
 | Giờ mở | `[08:00, 17:00)` trong các ngày thuộc một đợt; ngoài ra trang chỉ hiện thông báo, không có ô tìm kiếm |
 | Điểm danh | Tối đa 1 lần/người/ngày (khóa `Ngày + ID`), không phân buổi sáng/chiều, không có mã buổi học |
 | Đi sai đợt | Vẫn được ghi nhận, kèm cờ `Dung dot = 0` và dòng lưu ý trên màn hình |
-| Tổng hợp | Tự động 19:00 hằng ngày (Apps Script chạy trong khung 19:00–20:00) |
+| Tổng hợp | Tự động 19:00 hằng ngày (Apps Script chạy trong khung 19:00–20:00): `BC_`, `TongHop`, `ChuyenCan` |
 
 Người dùng tìm tên (không phân biệt hoa/thường và dấu; gõ tên, họ, mã `TUAF0012`…), chọn bằng phím ↑ ↓ + Enter hoặc chạm, xem thẻ thông tin rồi xác nhận. Người chưa có tên trong danh sách bấm *“Không tìm thấy tên của bạn?”* để tự điền (cần Họ tên, Trường, Khoa, Đợt học); hệ thống tạo mã `TUAF-N001`, `TUEBA-N001`… và điểm danh luôn.
 
 ## Cấu trúc Google Sheet
 
-| Tab | Nội dung |
-|---|---|
-| `DanhSach` | Danh sách chủ (331 người gốc + người tự đăng ký), có `study_arm`, `Nguồn`, `ten_khong_dau` |
-| `TuDangKy` | Người tự đăng ký (có số điện thoại) |
-| `Log` | Mọi lượt điểm danh của mọi ngày (dạng dài) để phân tích bằng Stata/Python: `Timestamp, Ngay, ID, Ho ten, Truong, Khoa, Bo mon, Dot dang ky, Dot hien hanh, Dung dot (1/0), study_arm, Nguon, Ghi chu` |
-| `DD_yyyy-MM-dd` | Điểm danh trong ngày, ghi thời gian thực (cùng cột với `Log`) |
-| `TH_yyyy-MM-dd` | Tổng hợp của ngày: A) số liệu tổng (có dòng *Có lớp hôm nay*), B) đi sai đợt, C) vắng mặt, D) tự đăng ký |
-| `BC_dd-MM-yyyy` | Báo cáo cho lãnh đạo của ngày (xem bên dưới), tạo cùng lúc với `TH_` |
-| `TongHop_LuyKe` | Mỗi người một dòng: số buổi có mặt đúng đợt, số buổi đáng lẽ phải đi, tỷ lệ chuyên cần, số buổi đi sai đợt |
+Bốn tab cố định + **một** tab mỗi ngày học (cả khóa khoảng 19 ngày cuối tuần, nên Sheet chỉ có khoảng 25 tab):
+
+| Tab | Loại | Nội dung |
+|---|---|---|
+| `DanhSach` | cố định | Danh sách học viên (master, sửa tay được), gồm cả người tự đăng ký. Cột: `ID học viên, Trường, Khoa, Đợt học, Họ và tên, Năm sinh, Giới tính, Ngạch giảng viên, Bộ môn, Ghi chú, study_arm, Nguồn` (`Danh sách gốc` / `Tự đăng ký`), `ten_khong_dau`, `So_dien_thoai`, `Ngay_dang_ky` |
+| `Log` | cố định | **Nguồn dữ liệu gốc duy nhất**: mỗi lượt điểm danh 1 dòng. Cột: `Timestamp, Ngay, ID, Ho_ten, Truong, Khoa, Bo_mon, Dot_dang_ky, Dot_hien_hanh, Dung_dot, study_arm, Nguon` (`Web` / `Admin` / `Nhập bù`) |
+| `TongHop` | cố định | Mỗi (Ngày, Trường có lớp) 1 dòng, cập nhật lúc 19:00, ngày mới nhất lên đầu |
+| `ChuyenCan` | cố định | Mỗi học viên 1 dòng, cập nhật lúc 19:00, bật sẵn bộ lọc |
+| `BC_dd-MM-yyyy` | mỗi ngày học | Báo cáo cho lãnh đạo của ngày (xem bên dưới) |
+
+Thứ tự tab: `BC_` của ngày mới nhất, `TongHop`, `ChuyenCan`, `DanhSach`, `Log`, các `BC_` cũ hơn (ngày giảm dần), cuối cùng là tab ẩn. Tab lạ bất kỳ (ví dụ `DonVi`, `CanhBao`) bị **ẩn, không bị xóa**.
+
+Điểm danh chỉ ghi vào `Log` (và `DanhSach` với người tự đăng ký): **không** tạo tab theo ngày lúc điểm danh. Kiểm tra trùng dựa trên `Log` (cặp `Ngay` + `ID`), có bộ nhớ đệm của hôm nay để không phải đọc lại cả `Log` mỗi lần, và vẫn nằm trong `LockService`.
+
+`TongHop` — cột: `Ngay, Truong, Dot_hien_hanh, Tong_phai_di, Co_mat, Co_mat_dung_dot, Co_mat_sai_dot, Tu_dang_ky, Vang, Ty_le_co_mat_dung_dot, Treatment_co_mat, Control_co_mat, Control_di_dot1` (`Control_di_dot1` để trống ở ngày thuộc Đợt 2).
+
+`ChuyenCan` — cột: `ID, Ho_ten, Truong, Khoa, Dot_dang_ky, study_arm, So_buoi_phai_di, So_buoi_co_mat, So_buoi_sai_dot, Ty_le_chuyen_can, Ngay_vang_gan_nhat`.
 
 > Múi giờ của Google Sheet phải là `Asia/Ho_Chi_Minh` (hàm `setup()` tự đặt). Nếu lệch, Sheets sẽ diễn giải ngày/giờ sai vài giờ.
 
 ## Trường “có lớp” trong ngày
 
-Lớp học vào thứ Bảy/Chủ nhật và **mỗi trường học vào một ngày riêng**, không có lịch cố định. Quy ước duy nhất, dùng ở `TH_`, `BC_` và `TongHop_LuyKe`:
+Lớp học vào thứ Bảy/Chủ nhật và **mỗi trường học vào một ngày riêng**, không có lịch cố định. Quy ước duy nhất, dùng ở `BC_`, `TongHop` và `ChuyenCan`:
 
 > Trường X **có lớp** vào ngày D khi và chỉ khi có ít nhất 1 lượt điểm danh của học viên thuộc trường X vào ngày D (tính cả người tự đăng ký và dữ liệu nhập bù).
 
-- Người *đáng lẽ phải đi* ngày D = học viên thuộc **đợt hiện hành** và thuộc **trường có lớp** ngày D. Trường không có lớp thì không ai bị tính vắng; các chỉ tiêu vắng/tỷ lệ của trường đó ghi `–`.
-- `TongHop_LuyKe`: *số buổi đáng lẽ phải đi* của một người = số ngày thuộc đợt của người đó mà trường của người đó có lớp.
-- `TH_`/`BC_` chỉ được tạo khi ngày đó có ít nhất 1 lượt điểm danh của TUAF/TUEBA.
+- Người *đáng lẽ phải đi* ngày D = học viên thuộc **đợt hiện hành**, thuộc **trường có lớp** ngày D và **đã có tên trong danh sách** vào ngày đó (người tự đăng ký sau ngày D không bị tính vắng ngày D, nên số liệu ngày cũ không đổi khi tổng hợp lại). Trường không có lớp thì không ai bị tính vắng.
+- `ChuyenCan`: *số buổi phải đi* của một người = số ngày (đã có trong `TongHop`) thuộc đợt của người đó mà trường của người đó có lớp, tính từ ngày người đó có tên (người tự đăng ký: từ `Ngay_dang_ky`). `So_buoi_sai_dot` = số ngày người đó có mặt ở đợt khác đợt đăng ký.
+- Chỉ tạo `BC_` và dòng `TongHop` khi ngày đó có ít nhất 1 lượt điểm danh của TUAF/TUEBA. Khi một ngày không còn lượt nào (ví dụ sau `adminDeleteDay`), `BC_` và các dòng `TongHop` của ngày đó bị gỡ.
 - Hệ quả cần lưu ý: một lượt điểm danh vào ngày thường (kể cả để thử) cũng làm trường đó “có lớp” hôm ấy; dọn bằng `adminDeleteDay`.
 
 ## Sheet báo cáo `BC_dd-MM-yyyy`
@@ -59,18 +67,21 @@ Mỗi ngày có lớp có thêm một sheet (ví dụ `BC_10-10-2026`), ghi **gi
 | F | `Dot` | Đợt đăng ký của học viên: `1` hoặc `2` (số) |
 
 - **Khối 1**: mọi học viên thuộc đợt hiện hành của các trường có lớp (Y hoặc N). **Khối 2**: người có mặt nhưng không thuộc đợt hiện hành (luôn `Y`).
-- Sắp xếp: Trường (TUAF trước) → Khối 1 trước Khối 2 → ID tăng dần (ID tự đăng ký xếp cuối). Dòng `N` được tô nền nhạt.
+- Sắp xếp: Trường (TUAF trước) → Khối 1 trước Khối 2 → ID tăng dần (ID tự đăng ký xếp cuối). Dòng `N` tô nền đỏ nhạt; dòng thuộc khối sai đợt tô nền vàng nhạt.
 - Bảng đếm bên phải từ ô `N3` (`Truong` / `Count of Diem_danh`): số dòng `Y` của từng trường **có lớp** và `Grand Total` (tính cả người đi sai đợt).
+- Bảng chỉ tiêu từ ô `N9`: `Phải đi (đúng đợt)`, `Có mặt đúng đợt`, `Có mặt sai đợt`, `Vắng`, `Tỷ lệ có mặt đúng đợt`; chỉ hiện cột của trường có lớp, cột cuối là `Tổng`.
 
-## Chạy bù tổng hợp một ngày
+## Tổng hợp lúc 19:00 và chạy bù
 
-Trong trình soạn thảo Apps Script: chọn hàm `buildDailySummary` rồi gọi với tham số, hoặc qua web (cần `ADMIN_KEY`):
+`buildDailySummary(dateStr)` (trigger 19:00 hằng ngày gọi cho hôm nay): đọc `Log` + `DanhSach`, xác định trường có lớp, rồi (1) tạo/ghi đè `BC_dd-MM-yyyy`, (2) ghi/ghi đè các dòng của ngày đó trong `TongHop`, (3) tính lại toàn bộ `ChuyenCan`, (4) sắp xếp lại tab.
+
+Chạy bù trong trình soạn thảo Apps Script (hàm `buildDailySummary` với tham số) hoặc qua web (cần `ADMIN_KEY`):
 
 ```
 <WEB_APP_URL>?action=adminSummary&key=<ADMIN_KEY>&date=2026-10-12
 ```
 
-Tạo cả `TH_` lẫn `BC_` khi ngày đó thuộc một đợt **và** có ít nhất 1 lượt điểm danh; chạy lại sẽ ghi đè. Bước này cũng tự bù các dòng thiếu trong `Log` (xem *Hạn chế*) và tính lại `TongHop_LuyKe`.
+Sau khi sửa dữ liệu của một **ngày đã qua** bằng `adminCheckin` / `adminDelete` / `adminImport`, hệ thống tự gọi lại `buildDailySummary` cho ngày đó. Sửa tay trực tiếp `Log` thì chạy `adminSummary` cho ngày đó (và `adminClearCache` nếu sửa ngày hôm nay).
 
 ## Nhập bù điểm danh (`adminImport`)
 
@@ -83,8 +94,7 @@ Dùng khi cần nhập lại các buổi đã học trước khi hệ thống ch
 
 - Kiểm tra trước: nếu có ngày không thuộc đợt nào hoặc ID không có trong `DanhSach`, **cả lô bị từ chối và không ghi gì** (phản hồi `code: "invalid"` kèm danh sách dòng lỗi).
 - Dùng `LockService`; bỏ qua lượt đã có (khóa *Ngày + ID*) nên chạy lại không bị trùng (`added` / `skipped` trong phản hồi).
-- Mỗi lượt ghi vào `DD_yyyy-MM-dd` và `Log` với `Timestamp` để trống và `Nguon = Nhập bù`.
-- Xong thì chạy `adminSummary` cho từng ngày để tạo `TH_`, `BC_` và cập nhật `TongHop_LuyKe`.
+- Mỗi lượt ghi vào `Log` với `Timestamp` để trống và `Nguon = Nhập bù`; các ngày đã qua có thêm dữ liệu được tổng hợp lại ngay.
 - Dữ liệu nhập bù là dữ liệu cá nhân: **không** đưa file nguồn lên GitHub (`*.csv` đã nằm trong `.gitignore`).
 
 ## Hàm quản trị
@@ -93,19 +103,19 @@ Gọi qua web (GET hoặc POST JSON), đều cần `key=<ADMIN_KEY>` (lưu trong
 
 | Hành động | Tham số | Tác dụng |
 |---|---|---|
-| `adminCheckin` | `date`, `id` | Điểm danh bù cho một người (ghi chú `admin`) |
-| `adminDelete` | `date`, `id` | Xóa một lượt điểm danh (cả `DD_` và `Log`) |
-| `adminSummary` | `date` | Chạy bù tổng hợp (`TH_` + `BC_` + `TongHop_LuyKe`) |
+| `adminCheckin` | `date`, `id` | Điểm danh bù cho một người (`Nguon = Admin`); ngày đã qua thì tự tổng hợp lại |
+| `adminDelete` | `date`, `id` | Xóa một lượt điểm danh khỏi `Log`; ngày đã qua thì tự tổng hợp lại |
+| `adminSummary` | `date` | Chạy bù tổng hợp (`BC_` + `TongHop` + `ChuyenCan`) |
 | `adminImport` | `items` = `[{date, id}]` | Nhập bù lượt điểm danh (xem *Nhập bù điểm danh*) |
-| `adminResyncLog` | `date` | Bù các dòng `Log` còn thiếu so với `DD_` |
-| `adminExport` | `sheet` (mặc định `DanhSach`) | Xuất một tab dạng JSON (`DanhSach`, `TuDangKy`, `Log`, `TongHop_LuyKe`, `DD_…`, `TH_…`, `BC_…`) |
-| `adminDeleteDay` | `date`, `confirm=yes` | Xóa toàn bộ điểm danh của một ngày: `DD_`, `TH_`, `BC_` và các dòng trong `Log` (dọn dữ liệu thử) |
-| `adminDeleteTab` | `name` | Xóa tab `TH_…`, `DD_…` hoặc `BC_…` |
-| `adminRemovePerson` | `id` (dạng `TUAF-N001`) | Xóa hẳn một người tự đăng ký khỏi mọi tab, đặt lại bộ đếm, tính lại `TongHop_LuyKe` |
-| `adminRebuild` | – | Tính lại `TongHop_LuyKe` |
-| `adminClearCache` | – | Xóa bộ nhớ đệm (sau khi sửa tay `DanhSach`/`DD_`) |
-| `adminSetup` | – | Chạy lại `setup()` (an toàn, không trùng dữ liệu) |
-| `adminDebug` | – | Danh sách tab, múi giờ, trigger, bộ đếm |
+| `adminExport` | `sheet` (mặc định `DanhSach`) | Xuất một tab dạng JSON (`DanhSach`, `Log`, `TongHop`, `ChuyenCan`, `BC_…`) |
+| `adminDeleteDay` | `date`, `confirm=yes` | Xóa toàn bộ điểm danh của một ngày: các dòng trong `Log`, `BC_` và các dòng `TongHop` của ngày đó; tính lại `ChuyenCan` (dọn dữ liệu thử) |
+| `adminDeleteTab` | `name` | Xóa tab `BC_…` |
+| `adminRemovePerson` | `id` (dạng `TUAF-N001`) | Xóa hẳn một người tự đăng ký khỏi `DanhSach` và `Log`, đặt lại bộ đếm, tổng hợp lại các ngày bị ảnh hưởng |
+| `adminRebuild` | – | Tính lại `ChuyenCan` |
+| `adminClearCache` | – | Xóa bộ nhớ đệm (sau khi sửa tay `DanhSach`/`Log`) |
+| `adminSetup` | – | Chạy lại `setup()` (an toàn, không ghi đè dữ liệu) |
+| `adminDebug` | – | Danh sách tab (kể cả tab ẩn), múi giờ, trigger, bộ đếm, định dạng ô `Log` |
+| `adminMigrate`, `adminMigrateCleanup` | `confirm=yes` | Chỉ dùng một lần để chuyển từ cấu trúc cũ (xem `apps-script/MigrateV3.gs`) |
 
 ### Giờ giả lập (chỉ để kiểm thử)
 
@@ -138,13 +148,14 @@ set FUTUREWORK_ADMIN_KEY=<ADMIN_KEY>
 python export_danhsach.py                  # -> DanhSach_YYYY-MM-DD.xlsx (đọc URL từ config.js)
 ```
 
-Với `Log` (để phân tích): mở Google Sheet → tab `Log` → *Tệp → Tải xuống → CSV*, hoặc `adminExport&sheet=Log`.
+Với `Log`, `TongHop`, `ChuyenCan` (để phân tích): mở Google Sheet → tab đó → *Tệp → Tải xuống → CSV*, hoặc `adminExport&sheet=Log`.
 
 ## Hạn chế cần biết
 
-- **Danh sách học viên được phát công khai trong giờ mở** (cần để tìm kiếm trên điện thoại), gồm cả năm sinh và ghi chú. Ngoài giờ, server từ chối. Ai biết URL đều có thể điểm danh hộ người khác (thiết kế không có mã buổi học).
-- Khi hàng trăm người bấm cùng lúc, hệ thống xếp hàng (khoảng 1,6 người/giây) và giao diện tự thử lại; thử với 100 người cùng lúc: 100/100 thành công trong ~1 phút, không trùng. `Log` được ghi sau khi nhả khóa nên có thể thiếu 1–2 dòng tạm thời; chúng được bù tự động khi tổng hợp 19:00 hoặc bằng `adminResyncLog`. Nguồn chính xác trong ngày là `DD_`.
-- Form tự đăng ký giới hạn 60 lượt/ngày (chống spam).
+- **Danh sách học viên được phát công khai trong giờ mở** (cần để tìm kiếm trên điện thoại), gồm cả năm sinh và ghi chú (không gồm số điện thoại, `study_arm`, ngày đăng ký). Ngoài giờ, server từ chối. Ai biết URL đều có thể điểm danh hộ người khác (thiết kế không có mã buổi học).
+- Khi hàng trăm người bấm cùng lúc, hệ thống xếp hàng và giao diện tự thử lại (tối đa 5 lần khi server báo bận). `Log` là nguồn dữ liệu duy nhất và được ghi trong khóa nên không còn tình trạng thiếu dòng.
+- Form tự đăng ký giới hạn 60 lượt/ngày (chống spam, đếm theo `Ngay_dang_ky` trong `DanhSach`).
+- Ghi vào `Log` dùng `setValues` (không dùng `appendRow`): `appendRow` bỏ qua định dạng ô và tự đổi `2026-10-17` thành kiểu ngày. Các cột ngày/giờ của `Log` luôn là chữ.
 - **Chia sẻ Google Sheet:** nên đặt *Hạn chế* (chỉ người được mời). Ai sửa được Sheet đều mở được Apps Script gắn kèm và đọc `ADMIN_KEY`. Nếu nghi ngờ lộ khóa, đổi giá trị `ADMIN_KEY` trong *Thuộc tính tập lệnh*.
 
 ## Cấu trúc thư mục
@@ -152,6 +163,7 @@ Với `Log` (để phân tích): mở Google Sheet → tab `Log` → *Tệp → 
 ```
 index.html, style.css, app.js, search.js, config.js   giao diện (GitHub Pages)
 apps-script/Code.gs, appsscript.json                  backend
+apps-script/MigrateV3.gs                              chuyển một lần từ cấu trúc cũ (có thể xóa sau khi xong)
 apps-script/RosterData.gs                              (không có trên GitHub) dữ liệu + khóa
 prepare_roster.py                                      gộp 2 file Excel -> RosterData.gs
 export_danhsach.py                                     xuất DanhSach ra Excel

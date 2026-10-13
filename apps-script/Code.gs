@@ -10,6 +10,13 @@
  *   POST {action:'register', ...}  -> tự đăng ký + điểm danh
  *   admin*  (cần key=ADMIN_KEY)    -> xem README.md
  *
+ * Cấu trúc Google Sheet (v3): 4 tab cố định + 1 tab BC_dd-MM-yyyy mỗi ngày học
+ *   DanhSach   danh sách học viên (master, gồm cả người tự đăng ký)
+ *   Log        mọi lượt điểm danh (nguồn dữ liệu gốc duy nhất)
+ *   TongHop    mỗi (Ngày, Trường có lớp) một dòng, cập nhật lúc 19:00
+ *   ChuyenCan  mỗi học viên một dòng, cập nhật lúc 19:00
+ *   BC_...     báo cáo cho lãnh đạo của ngày
+ *
  * Danh sách học viên nằm trong RosterData.gs (không đưa lên GitHub) và chỉ
  * được nạp vào Google Sheet bởi setup().
  */
@@ -26,26 +33,28 @@ var DOTS = [
 ];
 var OUT_OF_DOT = 'Ngoài đợt';
 var LOCK_WAIT_MS = 45000;
-var CHECKED_TTL = 1800;        // giây; bộ nhớ đệm "đã điểm danh" tự làm mới sau 30 phút
+var CHECKED_TTL = 1800;        // giây; bộ nhớ đệm "đã điểm danh" tự làm mới sau 30 phút (dựng lại từ Log)
 var ROSTER_TTL = 900;           // giây; sửa tay DanhSach sẽ có hiệu lực sau tối đa 15 phút (hoặc chạy clearCache)
 var MAX_SELF_REG_PER_DAY = 60;  // chặn spam form tự đăng ký
 var LOG_PREALLOC_ROWS = 12000;
 
-var TAB = { ROSTER: 'DanhSach', REG: 'TuDangKy', LOG: 'Log', LUYKE: 'TongHop_LuyKe' };
-var SRC_ORIG = 'Danh sách gốc';
+var TAB = { ROSTER: 'DanhSach', LOG: 'Log', SUM: 'TongHop', ATT: 'ChuyenCan' };
+var SRC_ORIG = 'Danh sách gốc';       // cột Nguon của DanhSach
 var SRC_SELF = 'Tự đăng ký';
-var SRC_IMPORT = 'Nhập bù';      // giá trị cột Nguon của dòng nhập bù (adminImport)
+var LOG_WEB = 'Web';                  // cột Nguon của Log: lượt điểm danh qua web
+var LOG_ADMIN = 'Admin';              // ... do admin điểm danh bù một người
+var LOG_IMPORT = 'Nhập bù';           // ... nhập bù hàng loạt (adminImport)
 var SCHOOLS = ['TUAF', 'TUEBA'];
 var BC_HEADERS = ['ID', 'Ho_ten', 'Truong', 'Ngay_hoc', 'Diem_danh', 'Dot'];
 
 var ROSTER_HEADERS = ['ID học viên', 'Trường', 'Khoa', 'Đợt học', 'Họ và tên', 'Năm sinh', 'Giới tính',
-  'Ngạch giảng viên', 'Bộ môn', 'Ghi chú', 'study_arm', 'Nguồn', 'ten_khong_dau'];
-var LOG_HEADERS = ['Timestamp', 'Ngay', 'ID', 'Ho ten', 'Truong', 'Khoa', 'Bo mon', 'Dot dang ky',
-  'Dot hien hanh', 'Dung dot (1/0)', 'study_arm', 'Nguon', 'Ghi chu'];
-var REG_HEADERS = ['Timestamp', 'Ngay', 'ID moi', 'Ho ten', 'Truong', 'Khoa', 'Bo mon', 'Dot hoc',
-  'Nam sinh', 'Gioi tinh', 'Ngach giang vien', 'So dien thoai', 'study_arm'];
-var LUYKE_HEADERS = ['ID học viên', 'Họ và tên', 'Trường', 'Khoa', 'Bộ môn', 'Đợt học', 'study_arm', 'Nguồn',
-  'Số buổi có mặt (đúng đợt)', 'Số buổi đáng lẽ phải đi', 'Tỷ lệ chuyên cần', 'Số buổi đi sai đợt'];
+  'Ngạch giảng viên', 'Bộ môn', 'Ghi chú', 'study_arm', 'Nguồn', 'ten_khong_dau', 'So_dien_thoai', 'Ngay_dang_ky'];
+var LOG_HEADERS = ['Timestamp', 'Ngay', 'ID', 'Ho_ten', 'Truong', 'Khoa', 'Bo_mon', 'Dot_dang_ky',
+  'Dot_hien_hanh', 'Dung_dot', 'study_arm', 'Nguon'];
+var SUM_HEADERS = ['Ngay', 'Truong', 'Dot_hien_hanh', 'Tong_phai_di', 'Co_mat', 'Co_mat_dung_dot', 'Co_mat_sai_dot',
+  'Tu_dang_ky', 'Vang', 'Ty_le_co_mat_dung_dot', 'Treatment_co_mat', 'Control_co_mat', 'Control_di_dot1'];
+var ATT_HEADERS = ['ID', 'Ho_ten', 'Truong', 'Khoa', 'Dot_dang_ky', 'study_arm', 'So_buoi_phai_di', 'So_buoi_co_mat',
+  'So_buoi_sai_dot', 'Ty_le_chuyen_can', 'Ngay_vang_gan_nhat'];
 
 // ===================== Điểm vào HTTP =====================
 function doGet(e) { return route_(e, false); }
@@ -159,6 +168,17 @@ function normDate_(s) {
 
 function cellDate_(v) { return v instanceof Date ? fmt_(v, 'yyyy-MM-dd') : str_(v).substring(0, 10); }
 function cellTs_(v) { return v instanceof Date ? fmt_(v, 'yyyy-MM-dd HH:mm:ss') : str_(v); }
+function dmyOf_(iso) { return iso.substring(8, 10) + '/' + iso.substring(5, 7) + '/' + iso.substring(0, 4); }
+function bcName_(iso) { return 'BC_' + iso.substring(8, 10) + '-' + iso.substring(5, 7) + '-' + iso.substring(0, 4); }
+function hasOwn_(o, k) { return Object.prototype.hasOwnProperty.call(o, k); }
+
+/** Ngày trong cột Ngay của TongHop (dd/MM/yyyy, yyyy-MM-dd hoặc Date) -> yyyy-MM-dd; không hiểu thì ''. */
+function sumDateIso_(v) {
+  if (v instanceof Date) return fmt_(v, 'yyyy-MM-dd');
+  var s = str_(v), m = s.match(/^(\d{2})\/(\d{2})\/(\d{4})$/);
+  if (m) return m[3] + '-' + m[2] + '-' + m[1];
+  return /^\d{4}-\d{2}-\d{2}$/.test(s) ? s : '';
+}
 
 // ===================== Danh sách (DanhSach) =====================
 function cachePutBig_(cache, key, str, ttl) {
@@ -205,14 +225,15 @@ function readRoster_(force) {
     out.push({
       id: id, school: str_(row[1]), khoa: str_(row[2]), dot: str_(row[3]), name: str_(row[4]),
       year: str_(row[5]).replace(/\.0$/, ''), gender: str_(row[6]), rank: str_(row[7]), bomon: str_(row[8]),
-      note: str_(row[9]), arm: str_(row[10]), src: str_(row[11]) || SRC_ORIG
+      note: str_(row[9]), arm: str_(row[10]), src: str_(row[11]) || SRC_ORIG,
+      phone: str_(row[13]), regDate: cellDate_(row[14])
     });
   }
   cachePutBig_(cache, 'roster', JSON.stringify(out), ROSTER_TTL);
   return out;
 }
 
-/** Xóa bộ nhớ đệm (danh sách + 'đã điểm danh' của mọi ngày trong các đợt). Chạy sau khi sửa tay DanhSach/DD_. */
+/** Xóa bộ nhớ đệm (danh sách + 'đã điểm danh' của mọi ngày trong các đợt). Chạy sau khi sửa tay DanhSach/Log. */
 function clearCache() {
   clearRosterCache_();
   var keys = [];
@@ -267,7 +288,7 @@ function actionRoster_(p) {
   var info = nowInfo_(fakeOf_(p));
   if (!info.open) return closedResp_(info);   // ngoài giờ thì không phát danh sách
   var roster = readRoster_(false);
-  var rows = roster.map(function (r) {
+  var rows = roster.map(function (r) {         // KHÔNG phát số điện thoại, study_arm, ngày đăng ký
     return [r.id, r.name, r.school, r.khoa, r.bomon, r.dot, r.year, r.gender, r.rank, r.note];
   });
   return {
@@ -307,29 +328,28 @@ function actionCheckin_(p) {
   if (!lock.tryLock(LOCK_WAIT_MS)) return { ok: false, code: 'busy', message: 'Hệ thống đang bận, vui lòng thử lại.' };
   var ctx = ctxOfInfo_(info), res;
   try {
-    res = recordCheckinLocked_(ss, person, ctx, '');
+    res = recordCheckinLocked_(ss, person, ctx, LOG_WEB);
   } finally {
     lock.releaseLock();
   }
-  if (res.status === 'ok') appendLog_(ss, res.row);
   var out = checkinResp_(person, res, ctx);
   if (rk) cache.put(rk, JSON.stringify(out), 3600);
   return out;
 }
 
-/** Gọi khi đã giữ khóa. Khóa trùng theo (Ngày, ID). */
-function recordCheckinLocked_(ss, person, ctx, note) {
-  var day = daySheet_(ss, ctx.iso, true);
-  var set = checkedSet_(ctx.iso, day);
+/** Gọi khi đã giữ khóa. Log là nguồn duy nhất; khóa trùng theo (Ngày, ID). */
+function recordCheckinLocked_(ss, person, ctx, nguon) {
+  var log = ss.getSheetByName(TAB.LOG);
+  var set = checkedSet_(ctx.iso, log);
   // dòng nhập bù có Timestamp trống -> giờ là '' (falsy), nên kiểm tra theo sự tồn tại của khóa
-  if (Object.prototype.hasOwnProperty.call(set, person.id)) return { status: 'already', time: set[person.id] };
+  if (hasOwn_(set, person.id)) return { status: 'already', time: set[person.id] };
   var row = [ctx.ts, ctx.iso, person.id, person.name, person.school, person.khoa, person.bomon,
-    person.dot, ctx.dot, person.dot === ctx.dot ? 1 : 0, person.arm, person.src, note || ''];
-  day.appendRow(row);                       // DD_ là nguồn chính để chặn trùng: ghi trong khóa
+    person.dot, ctx.dot, person.dot === ctx.dot ? 1 : 0, person.arm, nguon];
+  appendLogRow_(log, row);
   set[person.id] = ctx.time;
   CacheService.getScriptCache().put('ci_' + ctx.iso, JSON.stringify(set), CHECKED_TTL);
   SpreadsheetApp.flush();
-  return { status: 'ok', time: ctx.time, row: row };   // Log được ghi SAU khi nhả khóa (appendLog_) để rút ngắn hàng đợi
+  return { status: 'ok', time: ctx.time, row: row };
 }
 
 /** Ghi 1 dòng ở dạng chữ: appendRow tự đổi chuỗi số thành số (mất số 0 đầu của điện thoại), nên đặt định dạng '@' trước. */
@@ -339,35 +359,36 @@ function appendTextRow_(sh, row) {
   sh.getRange(r, 1, 1, row.length).setNumberFormat('@').setValues([row]);
 }
 
-/** Ghi dòng vào Log (chỉ thêm cuối, không cần khóa). Nếu lỗi thì không làm hỏng điểm danh: resyncLog_ sẽ bù lại khi tổng hợp. */
-function appendLog_(ss, row) {
-  try {
-    ss.getSheetByName(TAB.LOG).appendRow(row);
-  } catch (e) {
-    console.error('appendLog_ lỗi, sẽ được resyncLog_ bù: ' + e);
+/**
+ * Ghi 1 dòng vào cuối Log. KHÔNG dùng appendRow: nó bỏ qua định dạng '@' của ô và tự đổi chuỗi
+ * '2026-10-17' / '2026-10-17 09:00:00' thành kiểu ngày giờ; setValues vào ô đã đặt '@' thì giữ nguyên chữ.
+ */
+function appendLogRow_(log, row) {
+  var r = log.getLastRow() + 1;
+  if (r > log.getMaxRows()) {
+    log.insertRowsAfter(log.getMaxRows(), 500);
+    log.getRange(r, 1, 500, row.length).setNumberFormat('@');
   }
+  log.getRange(r, 1, 1, row.length).setValues([row]);
 }
 
-/** Bù các lượt có trong DD_<ngày> nhưng thiếu trong Log. Trả về các dòng đã bù (mảng rỗng nếu không thiếu). */
-function resyncLog_(ss, date) {
-  var day = ss.getSheetByName('DD_' + date), log = ss.getSheetByName(TAB.LOG);
-  if (!day || !log || day.getLastRow() < 2) return [];
-  var have = {};
-  readLog_(ss).forEach(function (l) { if (l.date === date) have[l.id] = true; });
-  var rows = day.getRange(2, 1, day.getLastRow() - 1, LOG_HEADERS.length).getValues()
-    .filter(function (r) { return str_(r[2]) && !have[str_(r[2])]; });
-  if (rows.length) log.getRange(log.getLastRow() + 1, 1, rows.length, LOG_HEADERS.length).setValues(rows);
-  return rows;
+/** Ghi nhiều dòng vào cuối sheet ở dạng chữ (giữ '2026-10-10', số 0 đầu...). */
+function putRows_(sh, rows) {
+  if (!rows.length) return;
+  var first = sh.getLastRow() + 1, need = first + rows.length - 1;
+  if (need > sh.getMaxRows()) sh.insertRowsAfter(sh.getMaxRows(), need - sh.getMaxRows());
+  sh.getRange(first, 1, rows.length, rows[0].length).setNumberFormat('@').setValues(rows);
 }
 
-/** Bộ nhớ đệm {ID: 'HH:mm'} của ngày; nếu mất thì dựng lại từ tab DD_. */
-function checkedSet_(iso, daySh) {
+/** Bộ nhớ đệm {ID: 'HH:mm'} của ngày; nếu mất thì dựng lại từ Log (cột Timestamp, Ngay, ID). */
+function checkedSet_(iso, logSh) {
   var raw = CacheService.getScriptCache().get('ci_' + iso);
   if (raw) { try { return JSON.parse(raw); } catch (e) { /* dựng lại */ } }
   var set = {};
-  var n = daySh.getLastRow();
+  var n = logSh.getLastRow();
   if (n > 1) {
-    daySh.getRange(2, 1, n - 1, 3).getValues().forEach(function (r) {
+    logSh.getRange(2, 1, n - 1, 3).getValues().forEach(function (r) {
+      if (cellDate_(r[1]) !== iso) return;
       var id = str_(r[2]);
       if (id) set[id] = cellTs_(r[0]).substring(11, 16);
     });
@@ -375,14 +396,7 @@ function checkedSet_(iso, daySh) {
   return set;
 }
 
-function daySheet_(ss, iso, create) {
-  var name = 'DD_' + iso;
-  var sh = ss.getSheetByName(name);
-  if (!sh && create) sh = makeTab_(ss, name, LOG_HEADERS, true, 0);
-  return sh;
-}
-
-// ----- Tự đăng ký -----
+// ----- Tự đăng ký (ghi thẳng vào DanhSach) -----
 function cleanText_(v, max) {
   return str_(v).replace(/\s+/g, ' ').replace(/^[=+\-@\s]+/, '').substring(0, max);
 }
@@ -425,34 +439,28 @@ function actionRegister_(p) {
           noAccent_(r.bomon) + '|' + r.year) === nkey) { person = r; break; }
     }
     if (!person) {
-      if (countSelfRegToday_(ss, ctx.iso) >= MAX_SELF_REG_PER_DAY)
+      if (countSelfRegToday_(roster, ctx.iso) >= MAX_SELF_REG_PER_DAY)
         return { ok: false, code: 'limit', message: 'Hôm nay đã đạt giới hạn số lượt tự đăng ký. Vui lòng liên hệ ban tổ chức.' };
       var id = nextSelfId_(school, roster);
       person = { id: id, school: school, khoa: unit.khoa, dot: dot, name: name, year: year, gender: gender,
-        rank: rank, bomon: bomon, note: '', arm: unit.arm, src: SRC_SELF };
+        rank: rank, bomon: bomon, note: '', arm: unit.arm, src: SRC_SELF, phone: phone, regDate: ctx.iso };
       appendTextRow_(ss.getSheetByName(TAB.ROSTER), [id, school, unit.khoa, dot, name, year, gender, rank, bomon, '',
-        unit.arm, SRC_SELF, noAccent_(name)]);
-      appendTextRow_(ss.getSheetByName(TAB.REG), [ctx.ts, ctx.iso, id, name, school, unit.khoa, bomon, dot, year,
-        gender, rank, phone, unit.arm]);
+        unit.arm, SRC_SELF, noAccent_(name), phone, ctx.iso]);
       clearRosterCache_();
       created = true;
     }
-    res = recordCheckinLocked_(ss, person, ctx, '');
+    res = recordCheckinLocked_(ss, person, ctx, LOG_WEB);
   } finally {
     lock.releaseLock();
   }
-  if (res.status === 'ok') appendLog_(ss_(), res.row);
   var out = checkinResp_(person, res, ctx);
   out.registered = created;
   if (rk) cache.put(rk, JSON.stringify(out), 3600);
   return out;
 }
 
-function countSelfRegToday_(ss, iso) {
-  var sh = ss.getSheetByName(TAB.REG), n = 0;
-  if (!sh || sh.getLastRow() < 2) return 0;
-  sh.getRange(2, 2, sh.getLastRow() - 1, 1).getValues().forEach(function (r) { if (cellDate_(r[0]) === iso) n++; });
-  return n;
+function countSelfRegToday_(roster, iso) {
+  return roster.filter(function (r) { return r.src === SRC_SELF && r.regDate === iso; }).length;
 }
 
 /** ID tự đăng ký dạng TUAF-N001; bộ đếm chỉ tăng (Script Property NCOUNT_<trường>). */
@@ -477,15 +485,45 @@ function makeTab_(ss, name, headers, textFormat, minRows) {
   return sh;
 }
 
+/**
+ * Thứ tự tab: BC_ của ngày mới nhất, TongHop, ChuyenCan, DanhSach, Log, các BC_ cũ hơn (ngày giảm dần),
+ * cuối cùng là các tab khác (bị ẩn, không xóa). Không bao giờ làm hỏng việc tổng hợp nếu lỗi.
+ */
+function arrangeTabs_(ss) {
+  try {
+    var bc = [], fixed = {}, others = [];
+    ss.getSheets().forEach(function (s) {
+      var n = s.getName(), m = /^BC_(\d{2})-(\d{2})-(\d{4})$/.exec(n);
+      if (m) bc.push({ s: s, key: m[3] + '-' + m[2] + '-' + m[1] });
+      else if (n === TAB.SUM || n === TAB.ATT || n === TAB.ROSTER || n === TAB.LOG) fixed[n] = s;
+      else others.push(s);
+    });
+    bc.sort(function (a, b) { return a.key < b.key ? 1 : a.key > b.key ? -1 : 0; });
+    var order = [];
+    if (bc.length) order.push(bc[0].s);
+    [TAB.SUM, TAB.ATT, TAB.ROSTER, TAB.LOG].forEach(function (n) { if (fixed[n]) order.push(fixed[n]); });
+    bc.slice(1).forEach(function (b) { order.push(b.s); });
+    others.forEach(function (s) { order.push(s); });
+    order.forEach(function (s) { if (s.isSheetHidden && s.isSheetHidden()) s.showSheet(); });   // tab ẩn không kích hoạt/di chuyển được
+    order.forEach(function (s, i) {
+      if (s.getIndex() !== i + 1) { ss.setActiveSheet(s); ss.moveActiveSheet(i + 1); }
+    });
+    if (order.length) ss.setActiveSheet(order[0]);
+    others.forEach(function (s) { if (!s.isSheetHidden()) s.hideSheet(); });
+  } catch (e) {
+    console.error('arrangeTabs_ lỗi (bỏ qua): ' + e);
+  }
+}
+
 // ===================== Tổng hợp 19:00 =====================
 /** Trigger hằng ngày (19:00–20:00 giờ VN). */
 function dailySummaryTrigger() { return buildDailySummary(); }
 
 /**
- * Tạo / ghi đè tab TH_yyyy-MM-dd và BC_dd-MM-yyyy (báo cáo cho sếp), rồi cập nhật TongHop_LuyKe.
- * Chạy tay được cho mọi ngày: buildDailySummary('2026-10-12').
- * Chỉ tạo khi ngày thuộc một đợt VÀ có ít nhất 1 lượt điểm danh của TUAF/TUEBA.
+ * Tổng hợp một ngày: (1) tạo / ghi đè BC_dd-MM-yyyy, (2) ghi / ghi đè các dòng của ngày đó trong TongHop,
+ * (3) tính lại toàn bộ ChuyenCan. Chạy tay được cho mọi ngày: buildDailySummary('2026-10-12').
  * Trường có lớp trong ngày = trường có ít nhất 1 lượt điểm danh ngày đó; trường không có lớp không bị tính vắng.
+ * Nếu ngày không còn lượt điểm danh nào của TUAF/TUEBA thì BC_ và các dòng TongHop của ngày đó bị gỡ.
  */
 function buildDailySummary(dateStr) {
   if (typeof dateStr !== 'string' || !dateStr) dateStr = nowInfo_().iso;   // trigger truyền event object
@@ -510,46 +548,7 @@ function readLog_(ss) {
 
 function logRowToObj_(r) {
   return { ts: cellTs_(r[0]), date: cellDate_(r[1]), id: str_(r[2]), name: str_(r[3]), school: str_(r[4]),
-    khoa: str_(r[5]), bomon: str_(r[6]), dotReg: str_(r[7]), dotNow: str_(r[8]), arm: str_(r[10]),
-    src: str_(r[11]), note: str_(r[12]) };
-}
-
-function thDates_(ss) {
-  return ss.getSheets().map(function (s) { return s.getName(); })
-    .filter(function (n) { return /^TH_\d{4}-\d{2}-\d{2}$/.test(n); })
-    .map(function (n) { return n.substring(3); });
-}
-
-function cmpPerson_(a, b) {
-  return a.school.localeCompare(b.school) || a.khoa.localeCompare(b.khoa, 'vi') || a.name.localeCompare(b.name, 'vi');
-}
-
-/**
- * Trường X "có lớp" vào ngày D <=> có ít nhất 1 lượt điểm danh của học viên trường X vào ngày D
- * (tính cả người tự đăng ký và dữ liệu nhập bù). Trả về { 'yyyy-MM-dd': { TUAF: true, TUEBA: true } }.
- */
-function classMap_(log) {
-  var m = {};
-  log.forEach(function (l) {
-    if (SCHOOLS.indexOf(l.school) < 0) return;
-    (m[l.date] = m[l.date] || {})[l.school] = true;
-  });
-  return m;
-}
-
-/** Các ngày thuộc đợt `dot` mà trường `school` có lớp (trong danh sách `days`), không quá `upTo` nếu có. */
-function classDaysOf_(cmap, days, school, dot, upTo) {
-  return days.filter(function (d) {
-    return dotOf_(d) === dot && cmap[d] && cmap[d][school] && (!upTo || d <= upTo);
-  });
-}
-
-/** Nguồn của người học (Danh sách gốc / Tự đăng ký): lấy từ DanhSach; cột Nguon của Log có thể là 'Nhập bù'. */
-function srcOf_(l, byId) {
-  var p = byId[l.id];
-  if (p && p.src) return p.src;
-  if (l.src === SRC_ORIG || l.src === SRC_SELF) return l.src;
-  return /-N\d+$/.test(l.id) ? SRC_SELF : SRC_ORIG;
+    khoa: str_(r[5]), bomon: str_(r[6]), dotReg: str_(r[7]), dotNow: str_(r[8]), arm: str_(r[10]), src: str_(r[11]) };
 }
 
 function cmpId_(a, b) {
@@ -559,148 +558,185 @@ function cmpId_(a, b) {
 
 function dotNum_(name) { return name === 'Đợt 1' ? 1 : name === 'Đợt 2' ? 2 : ''; }
 
-function dmyOf_(iso) { return iso.substring(8, 10) + '/' + iso.substring(5, 7) + '/' + iso.substring(0, 4); }
-
-function bcName_(iso) { return 'BC_' + iso.substring(8, 10) + '-' + iso.substring(5, 7) + '-' + iso.substring(0, 4); }
-
 function buildDailySummaryLocked_(dateStr, dot) {
   var ss = ss_();
-  var added = resyncLog_(ss, dateStr);      // bù Log nếu có lượt chỉ nằm trong DD_
   var roster = readRoster_(true);
   var byId = {};
   roster.forEach(function (r) { byId[r.id] = r; });
   var log = readLog_(ss);
-  added.forEach(function (r) {              // gộp thẳng dòng vừa bù, không phụ thuộc việc đọc lại sheet
-    var o = logRowToObj_(r);
-    if (!log.some(function (l) { return l.date === o.date && l.id === o.id; })) log.push(o);
-  });
-  log.forEach(function (l) { l.src = srcOf_(l, byId); });
 
   // Lượt điểm danh trong ngày của TUAF / TUEBA (mỗi ID một lần, lấy lần sớm nhất)
   var today = [], seen = {};
   log.filter(function (l) { return l.date === dateStr && SCHOOLS.indexOf(l.school) >= 0; })
     .sort(function (a, b) { return a.ts < b.ts ? -1 : a.ts > b.ts ? 1 : 0; })
     .forEach(function (l) { if (!seen[l.id]) { seen[l.id] = true; today.push(l); } });
-  if (!today.length) return { ok: true, skipped: 'Không có lượt điểm danh nào trong ngày ' + dateStr + '.' };
+
+  if (!today.length) {                       // không còn ai điểm danh: gỡ báo cáo của ngày (nếu có)
+    var removed = removeDaySummary_(ss, dateStr);
+    writeAttendance_(ss, roster, log);
+    arrangeTabs_(ss);
+    return { ok: true, skipped: 'Không có lượt điểm danh nào trong ngày ' + dateStr + '.', removed: removed };
+  }
+
+  // Nguồn của người học (Danh sách gốc / Tự đăng ký): lấy từ DanhSach
+  today.forEach(function (l) { var p = byId[l.id]; l.person = p || null; l.isSelf = p ? p.src === SRC_SELF : /-N\d+$/.test(l.id); });
 
   // Trường có lớp hôm nay = có ít nhất 1 lượt điểm danh
   var classSet = {};
   today.forEach(function (l) { classSet[l.school] = true; });
-  var isClass = SCHOOLS.map(function (s) { return !!classSet[s]; });
-  var nClass = isClass.filter(Boolean).length;
+  var classSchools = SCHOOLS.filter(function (s) { return classSet[s]; });
 
-  // Số buổi học của từng trường trong đợt = các ngày đã có TH_ (cộng ngày đang tổng hợp) mà trường đó có lớp
-  var days = thDates_(ss);
-  if (days.indexOf(dateStr) < 0) days.push(dateStr);
-  var cmap = classMap_(log);
-  var attended = {};
-  log.forEach(function (l) { (attended[l.id] = attended[l.id] || {})[l.date] = true; });
+  // Đáng lẽ phải đi = thuộc đợt hiện hành + trường có lớp + đã có tên trong danh sách vào ngày đó
+  // (người tự đăng ký sau ngày này không bị tính vắng ngày này, để số liệu ngày cũ không đổi khi tổng hợp lại)
+  var expected = function (r) { return r.dot === dot && classSet[r.school] && (!r.regDate || r.regDate <= dateStr || seen[r.id]); };
+  var inDot = roster.filter(expected);
+  var stats = {}, sumRows = [];
+  var ctrlD1Today = function (l) { return dot === 'Đợt 1' && l.arm === 'Control'; };
+  classSchools.forEach(function (sc) {
+    var att = today.filter(function (l) { return l.school === sc; });
+    var exp = inDot.filter(function (r) { return r.school === sc; });
+    var right = att.filter(function (l) { return l.dotReg === dot; }).length;
+    var wrong = att.length - right;
+    var absent = exp.filter(function (r) { return !seen[r.id]; }).length;
+    stats[sc] = { phai: exp.length, dung: right, sai: wrong, vang: absent };
+    sumRows.push([dmyOf_(dateStr), sc, dot, exp.length, att.length, right, wrong,
+      att.filter(function (l) { return l.isSelf; }).length, absent, exp.length ? right / exp.length : '',
+      att.filter(function (l) { return l.arm === 'Treatment'; }).length,
+      att.filter(function (l) { return l.arm === 'Control'; }).length,
+      dot === 'Đợt 1' ? att.filter(ctrlD1Today).length : '']);
+  });
 
-  // ---- Bảng A ----
-  function by(items, pred) {
-    var c = [0, 0];
-    items.forEach(function (x) {
-      if (pred && !pred(x)) return;
-      var i = SCHOOLS.indexOf(x.school);
-      if (i >= 0) c[i]++;
+  var bc = writeBaoCao_(ss, dateStr, dot, roster.filter(function (r) { return r.regDate <= dateStr || !r.regDate || seen[r.id]; }), today, seen, classSet, stats);
+  writeSummaryRows_(ss, dateStr, sumRows);
+  writeAttendance_(ss, roster, log);
+  arrangeTabs_(ss);
+  return { ok: true, bcSheet: bc.sheet, present: today.length, classSchools: classSchools, stats: stats,
+    absent: classSchools.reduce(function (a, s) { return a + stats[s].vang; }, 0),
+    wrongDot: classSchools.reduce(function (a, s) { return a + stats[s].sai; }, 0),
+    selfRegistered: today.filter(function (l) { return l.isSelf; }).length, bc: bc };
+}
+
+/** Gỡ BC_ và các dòng TongHop của một ngày. Trả về {bc: bool, sumRows: n}. */
+function removeDaySummary_(ss, dateStr) {
+  var res = { bc: false, sumRows: 0 };
+  var bc = ss.getSheetByName(bcName_(dateStr));
+  if (bc) { ss.deleteSheet(bc); res.bc = true; }
+  var sh = ss.getSheetByName(TAB.SUM);
+  if (sh && sh.getLastRow() > 1) {
+    var keep = [], n = sh.getLastRow() - 1;
+    sh.getRange(2, 1, n, SUM_HEADERS.length).getValues().forEach(function (r) {
+      if (sumDateIso_(r[0]) === dateStr) res.sumRows++; else keep.push(r);
     });
-    return [c[0], c[1], c[0] + c[1]];
+    if (res.sumRows) {
+      sh.getRange(2, 1, n, SUM_HEADERS.length).clearContent();
+      if (keep.length) {
+        sh.getRange(2, 1, keep.length, 1).setNumberFormat('@');
+        sh.getRange(2, 1, keep.length, SUM_HEADERS.length).setValues(keep);
+      }
+    }
   }
-  // chỉ tiêu liên quan tới vắng / đáng lẽ phải đi: trường không có lớp ghi '–'
-  function onlyClass(arr) { return [isClass[0] ? arr[0] : '–', isClass[1] ? arr[1] : '–', arr[2]]; }
-  var inDot = roster.filter(function (r) { return r.dot === dot && classSet[r.school]; });   // đáng lẽ phải đi
-  var absent = inDot.filter(function (r) { return !seen[r.id]; });
-  var right = by(today, function (l) { return l.dotReg === dot; });
-  var totInDot = by(inDot);
-  var ctrlD1 = {};
-  log.forEach(function (l) {
-    if (l.arm === 'Control' && l.date <= dateStr && dotOf_(l.date) === 'Đợt 1') ctrlD1[l.id] = l.school;
-  });
-  var ctrlD1Cum = [0, 0];
-  Object.keys(ctrlD1).forEach(function (id) { var i = SCHOOLS.indexOf(ctrlD1[id]); if (i >= 0) ctrlD1Cum[i]++; });
-  var ratio = function (a, b) { return b ? a / b : ''; };
-  var rowsA = [
-    ['Đợt hiện hành', dot, dot, dot],
-    ['Có lớp hôm nay (Có/Không)', isClass[0] ? 'Có' : 'Không', isClass[1] ? 'Có' : 'Không', nClass + ' trường'],
-    ['Tổng số người đi học hôm nay'].concat(by(today)),
-    ['   Trong đó: thuộc Đợt 1 (danh sách gốc)'].concat(by(today, function (l) { return l.src === SRC_ORIG && l.dotReg === 'Đợt 1'; })),
-    ['   Trong đó: thuộc Đợt 2 (danh sách gốc)'].concat(by(today, function (l) { return l.src === SRC_ORIG && l.dotReg === 'Đợt 2'; })),
-    ['   Trong đó: tự đăng ký (không có trong danh sách gốc)'].concat(by(today, function (l) { return l.src === SRC_SELF; })),
-    ['Đi đúng đợt (đợt đăng ký = đợt hiện hành)'].concat(right),
-    ['Đi sai đợt (đợt đăng ký ≠ đợt hiện hành)'].concat(by(today, function (l) { return l.dotReg !== dot; })),
-    ['Số người đáng lẽ phải đi (thuộc đợt hiện hành, trường có lớp)'].concat(onlyClass(totInDot)),
-    ['Số người đáng lẽ phải đi nhưng vắng'].concat(onlyClass(by(absent))),
-    ['Tỷ lệ có mặt đúng đợt (đúng đợt / số người đáng lẽ phải đi)',
-      isClass[0] ? ratio(right[0], totInDot[0]) : '–', isClass[1] ? ratio(right[1], totInDot[1]) : '–', ratio(right[2], totInDot[2])],
-    ['Có mặt hôm nay – nhóm Treatment'].concat(by(today, function (l) { return l.arm === 'Treatment'; })),
-    ['Có mặt hôm nay – nhóm Control'].concat(by(today, function (l) { return l.arm === 'Control'; })),
-    ['Có mặt hôm nay – chưa xác định study_arm'].concat(by(today, function (l) { return l.arm !== 'Treatment' && l.arm !== 'Control'; }))
-  ];
-  if (dot === 'Đợt 1') {
-    rowsA.push(['Control đi học trong Đợt 1 – hôm nay (nhiễm chéo nhóm đối chứng)']
-      .concat(by(today, function (l) { return l.arm === 'Control'; })));
-  } else {
-    rowsA.push(['Control đi học trong Đợt 1 – hôm nay (nhiễm chéo nhóm đối chứng)', 'Không áp dụng', 'Không áp dụng', 'Không áp dụng']);
-  }
-  rowsA.push(['Control đã từng đi học trong Đợt 1 – lũy kế đến hết hôm nay (số người)',
-    ctrlD1Cum[0], ctrlD1Cum[1], ctrlD1Cum[0] + ctrlD1Cum[1]]);
-  var ratioRow = 0;   // chỉ số dòng tỷ lệ trong rowsA
-  rowsA.forEach(function (x, i) { if (String(x[0]).indexOf('Tỷ lệ có mặt đúng đợt') === 0) ratioRow = i; });
+  return res;
+}
 
-  // ---- Bảng B: đi sai đợt ----
-  var rowsB = today.filter(function (l) { return l.dotReg !== dot; }).map(function (l) {
-    return [l.id, l.name, l.school, l.khoa, l.bomon, l.dotReg, l.arm, l.ts.substring(11, 19)];
-  });
-
-  // ---- Bảng C: vắng (thuộc đợt hiện hành, trường có lớp) ----
-  var rowsC = absent.slice().sort(cmpPerson_).map(function (r) {
-    var a = attended[r.id] || {}, miss = 0;
-    classDaysOf_(cmap, days, r.school, dot, dateStr).forEach(function (d) { if (!a[d]) miss++; });
-    return [r.id, r.name, r.school, r.khoa, r.bomon, r.note, miss];
-  });
-
-  // ---- Bảng D: tự đăng ký trong ngày ----
-  var regSh = ss.getSheetByName(TAB.REG), rowsD = [];
-  if (regSh && regSh.getLastRow() > 1) {
-    regSh.getRange(2, 1, regSh.getLastRow() - 1, REG_HEADERS.length).getValues().forEach(function (r) {
-      if (cellDate_(r[1]) !== dateStr) return;
-      rowsD.push([str_(r[2]), str_(r[3]), str_(r[4]), str_(r[5]), str_(r[6]), str_(r[7]), str_(r[12]),
-        cellTs_(r[0]).substring(11, 19)]);
+/**
+ * Ghi các dòng (Ngày, Trường có lớp) của một ngày vào TongHop: thay các dòng cũ của ngày đó, giữ các ngày khác,
+ * sắp ngày mới nhất lên đầu (trong ngày: TUAF trước TUEBA).
+ */
+function writeSummaryRows_(ss, dateStr, newRows) {
+  var sh = ss.getSheetByName(TAB.SUM) || makeTab_(ss, TAB.SUM, SUM_HEADERS, false, 0);
+  var n = sh.getLastRow(), existing = [];
+  if (n >= 2) {
+    sh.getRange(2, 1, n - 1, SUM_HEADERS.length).getValues().forEach(function (r) {
+      var iso = sumDateIso_(r[0]);
+      if (iso && iso !== dateStr) { r[0] = dmyOf_(iso); existing.push(r); }
     });
   }
-
-  // ---- Ghi tab TH_ ----
-  var name = 'TH_' + dateStr;
-  var sh = ss.getSheetByName(name);
-  if (sh) { sh.clear(); sh.setFrozenRows(0); } else sh = ss.insertSheet(name);
-  var dmy = dmyOf_(dateStr);
-  sh.getRange(1, 1).setValue('Tổng hợp điểm danh – ngày ' + dmy + ' – ' + dot).setFontWeight('bold').setFontSize(14);
-  var r = 3;
-  var startA = r + 2;   // dòng dữ liệu đầu của bảng A
-  r = putTable_(sh, r, 'A. Số liệu tổng', ['Chỉ tiêu', 'TUAF', 'TUEBA', 'Tổng'], rowsA, '#e8f0fe', '#c6dafc');
-  sh.getRange(startA + ratioRow, 2, 1, 3).setNumberFormat('0.0%');
-  r = putTable_(sh, r, 'B. Danh sách đi sai đợt (' + rowsB.length + ' người)',
-    ['ID', 'Họ tên', 'Trường', 'Khoa', 'Bộ môn', 'Đợt đăng ký', 'study_arm', 'Giờ điểm danh'], rowsB, '#fff4e5', '#fde0b0', [8]);
-  r = putTable_(sh, r, 'C. Danh sách vắng mặt – thuộc ' + dot + ', trường có lớp (' + rowsC.length + ' người)',
-    ['ID', 'Họ tên', 'Trường', 'Khoa', 'Bộ môn', 'Ghi chú', 'Số buổi đã vắng lũy kế trong đợt'], rowsC, '#fdecea', '#f8c9c4');
-  putTable_(sh, r, 'D. Tự đăng ký trong ngày (' + rowsD.length + ' người)',
-    ['ID mới', 'Họ tên', 'Trường', 'Khoa', 'Bộ môn', 'Đợt học', 'study_arm', 'Giờ đăng ký'], rowsD, '#e6f4ea', '#c4e5cc', [8]);
-  [340, 210, 170, 210, 210, 150, 130, 120].forEach(function (w, i) { sh.setColumnWidth(i + 1, w); });
+  var all = existing.concat(newRows);
+  all.sort(function (a, b) {
+    var da = sumDateIso_(a[0]), db = sumDateIso_(b[0]);
+    if (da !== db) return da < db ? 1 : -1;
+    return SCHOOLS.indexOf(a[1]) - SCHOOLS.indexOf(b[1]);
+  });
+  if (n >= 2) sh.getRange(2, 1, n - 1, SUM_HEADERS.length).clearContent();
+  if (!all.length) return;
+  if (sh.getMaxRows() < all.length + 1) sh.insertRowsAfter(sh.getMaxRows(), all.length + 1 - sh.getMaxRows());
+  sh.getRange(2, 1, all.length, 1).setNumberFormat('@');       // 11/10/2026 giữ dạng chữ, không bị hiểu là ngày tháng Mỹ
+  sh.getRange(2, 1, all.length, SUM_HEADERS.length).setValues(all);
+  sh.getRange(2, 10, all.length, 1).setNumberFormat('0.0%');
   sh.setFrozenRows(1);
+  fitColumns_(sh, SUM_HEADERS.length);
+}
 
-  var bc = writeBaoCao_(ss, dateStr, dot, roster, today, seen, classSet);
-  writeCumulative_(ss, roster, log);
-  return { ok: true, sheet: name, bcSheet: bc.sheet, present: today.length, absent: absent.length, wrongDot: rowsB.length,
-    selfRegistered: rowsD.length, classSchools: SCHOOLS.filter(function (s) { return classSet[s]; }), bc: bc };
+/** Các ngày lớp học đã được tổng hợp: {byKey: {'TUAF|Đợt 1': ['yyyy-MM-dd', ...]}, bySchool: {TUAF: {iso: true}}}. */
+function readClassDays_(ss) {
+  var out = { byKey: {}, bySchool: {} }, sh = ss.getSheetByName(TAB.SUM);
+  if (!sh || sh.getLastRow() < 2) return out;
+  sh.getRange(2, 1, sh.getLastRow() - 1, 3).getValues().forEach(function (r) {
+    var iso = sumDateIso_(r[0]), sc = str_(r[1]), dot = str_(r[2]) || dotOf_(iso);
+    if (!iso || !sc) return;
+    var k = sc + '|' + dot;
+    (out.byKey[k] = out.byKey[k] || []).push(iso);
+    (out.bySchool[sc] = out.bySchool[sc] || {})[iso] = true;
+  });
+  Object.keys(out.byKey).forEach(function (k) { out.byKey[k].sort(); });
+  return out;
+}
+
+/**
+ * ChuyenCan: mỗi học viên một dòng. Số buổi phải đi = số ngày (đã có trong TongHop) thuộc đợt của người đó mà
+ * trường của người đó có lớp. Số buổi sai đợt = số ngày đã tổng hợp mà người đó có mặt ở đợt khác đợt đăng ký.
+ */
+function writeAttendance_(ss, roster, log) {
+  var cd = readClassDays_(ss), attended = {};
+  log.forEach(function (l) { (attended[l.id] = attended[l.id] || {})[l.date] = true; });
+  var rows = roster.map(function (p) {
+    var a = attended[p.id] || {};
+    // buổi phải đi: chỉ tính từ ngày người đó có tên trong danh sách (người tự đăng ký: từ Ngay_dang_ky)
+    var days = (cd.byKey[p.school + '|' + p.dot] || []).filter(function (d) { return !p.regDate || d >= p.regDate; });
+    var own = 0, lastAbsent = '', wrong = 0;
+    days.forEach(function (d) { if (a[d]) own++; else lastAbsent = d; });
+    var school = cd.bySchool[p.school] || {};
+    Object.keys(a).forEach(function (d) { if (school[d] && dotOf_(d) !== p.dot) wrong++; });
+    return [p.id, p.name, p.school, p.khoa, p.dot, p.arm, days.length, own, wrong,
+      days.length ? own / days.length : '', lastAbsent ? dmyOf_(lastAbsent) : ''];
+  });
+  var sh = ss.getSheetByName(TAB.ATT) || makeTab_(ss, TAB.ATT, ATT_HEADERS, false, 0);
+  var f = sh.getFilter && sh.getFilter();
+  if (f) f.remove();
+  sh.clear();
+  if (sh.getMaxRows() < rows.length + 1) sh.insertRowsAfter(sh.getMaxRows(), rows.length + 1 - sh.getMaxRows());
+  sh.getRange(1, 1, 1, ATT_HEADERS.length).setValues([ATT_HEADERS]).setFontWeight('bold').setBackground('#e8eaed');
+  if (rows.length) {
+    sh.getRange(2, 11, rows.length, 1).setNumberFormat('@');
+    sh.getRange(2, 1, rows.length, ATT_HEADERS.length).setValues(rows);
+    sh.getRange(2, 10, rows.length, 1).setNumberFormat('0.0%');
+  }
+  sh.setFrozenRows(1);
+  sh.getRange(1, 1, rows.length + 1, ATT_HEADERS.length).createFilter();   // bật sẵn bộ lọc để lọc người vắng nhiều
+  fitColumns_(sh, ATT_HEADERS.length);
+}
+
+/** Tự giãn độ rộng n cột đầu (autoResize hay đo hẹp nên cộng thêm đệm). */
+function fitColumns_(sh, n) {
+  try {
+    sh.autoResizeColumns(1, n);
+    for (var c = 1; c <= n; c++) sh.setColumnWidth(c, sh.getColumnWidth(c) + 18);
+  } catch (e) { /* chỉ là trang trí */ }
+}
+
+function rebuildAttendance_() {
+  var ss = ss_();
+  writeAttendance_(ss, readRoster_(true), readLog_(ss));
 }
 
 /**
  * Sheet báo cáo cho sếp BC_dd-MM-yyyy (giá trị tĩnh, ghi đè nếu đã có).
  * Khối 1: học viên thuộc đợt hiện hành của các trường có lớp (Y/N); Khối 2: người có mặt nhưng không thuộc đợt hiện hành (luôn Y).
  * Sắp xếp: Trường (TUAF trước) > Khối 1 trước Khối 2 > ID tăng dần (ID tự đăng ký xếp cuối).
+ * Dòng N tô nền đỏ nhạt; dòng khối sai đợt tô nền vàng nhạt. Bảng đếm ở N3; bảng chỉ tiêu nhỏ ở N9.
  */
-function writeBaoCao_(ss, dateStr, dot, roster, today, seen, classSet) {
-  var dmy = dmyOf_(dateStr), dn = dotNum_(dot), byId = {}, rows = [];
+function writeBaoCao_(ss, dateStr, dot, roster, today, seen, classSet, stats) {
+  var dmy = dmyOf_(dateStr), dn = dotNum_(dot), byId = {}, rows = [], kind = [];
   roster.forEach(function (r) { byId[r.id] = r; });
   SCHOOLS.forEach(function (sc) {
     if (!classSet[sc]) return;
@@ -708,9 +744,11 @@ function writeBaoCao_(ss, dateStr, dot, roster, today, seen, classSet) {
     roster.filter(function (r) { return r.school === sc && r.dot === dot; }).sort(cmpId_).forEach(function (r) {
       inBlock1[r.id] = true;
       rows.push([r.id, r.name, sc, dmy, seen[r.id] ? 'Y' : 'N', dn]);
+      kind.push(seen[r.id] ? 'Y' : 'N');
     });
     today.filter(function (l) { return l.school === sc && !inBlock1[l.id]; }).sort(cmpId_).forEach(function (l) {
       rows.push([l.id, byId[l.id] ? byId[l.id].name : l.name, sc, dmy, 'Y', dotNum_(byId[l.id] ? byId[l.id].dot : l.dotReg)]);
+      kind.push('W');
     });
   });
 
@@ -722,8 +760,8 @@ function writeBaoCao_(ss, dateStr, dot, roster, today, seen, classSet) {
   sh.getRange(1, 1, 1, BC_HEADERS.length).setValues([BC_HEADERS]).setFontWeight('bold').setBackground('#e8eaed');
   sh.getRange(2, 4, n, 1).setNumberFormat('@');      // 11/10/2026 giữ dạng chữ, không bị hiểu là ngày tháng Mỹ
   sh.getRange(2, 1, n, BC_HEADERS.length).setValues(rows);
-  sh.getRange(2, 1, n, BC_HEADERS.length).setBackgrounds(rows.map(function (x) {
-    var c = x[4] === 'N' ? '#fdecea' : '#ffffff';
+  sh.getRange(2, 1, n, BC_HEADERS.length).setBackgrounds(kind.map(function (k) {
+    var c = k === 'N' ? '#fdecea' : k === 'W' ? '#fff8e1' : '#ffffff';
     return [c, c, c, c, c, c];
   }));
 
@@ -739,62 +777,32 @@ function writeBaoCao_(ss, dateStr, dot, roster, today, seen, classSet) {
   sh.getRange(3, 14, 1, 2).setValues([['Truong', 'Count of Diem_danh']]).setFontWeight('bold').setBackground('#e8eaed');
   sh.getRange(4, 14, pivot.length, 2).setValues(pivot);
   sh.getRange(3 + pivot.length, 14, 1, 2).setFontWeight('bold');
+
+  // Bảng chỉ tiêu nhỏ (ô N9): chỉ hiện cột của trường có lớp, cột cuối là Tổng
+  var cols = SCHOOLS.filter(function (sc) { return classSet[sc]; });
+  var sum = function (key) { return cols.reduce(function (a, sc) { return a + stats[sc][key]; }, 0); };
+  var ratio = function (a, b) { return b ? a / b : ''; };
+  var tbl = [
+    ['Chỉ tiêu'].concat(cols, ['Tổng']),
+    ['Phải đi (đúng đợt)'].concat(cols.map(function (sc) { return stats[sc].phai; }), [sum('phai')]),
+    ['Có mặt đúng đợt'].concat(cols.map(function (sc) { return stats[sc].dung; }), [sum('dung')]),
+    ['Có mặt sai đợt'].concat(cols.map(function (sc) { return stats[sc].sai; }), [sum('sai')]),
+    ['Vắng'].concat(cols.map(function (sc) { return stats[sc].vang; }), [sum('vang')]),
+    ['Tỷ lệ có mặt đúng đợt'].concat(cols.map(function (sc) { return ratio(stats[sc].dung, stats[sc].phai); }),
+      [ratio(sum('dung'), sum('phai'))])
+  ];
+  sh.getRange(9, 14, tbl.length, cols.length + 2).setValues(tbl);
+  sh.getRange(9, 14, 1, cols.length + 2).setFontWeight('bold').setBackground('#e8eaed');
+  sh.getRange(14, 15, 1, cols.length + 1).setNumberFormat('0.0%');
   sh.setFrozenRows(1);
   sh.autoResizeColumns(1, BC_HEADERS.length);
-  sh.autoResizeColumns(14, 2);
+  sh.autoResizeColumns(14, cols.length + 2);
   BC_HEADERS.map(function (h, i) { return i + 1; }).concat([14, 15]).forEach(function (c) {
     sh.setColumnWidth(c, sh.getColumnWidth(c) + 18);   // autoResize hay đo hẹp, chữ in đậm bị cắt
   });
+  for (var c2 = 16; c2 < 14 + cols.length + 2; c2++) sh.setColumnWidth(c2, sh.getColumnWidth(c2) + 18);
   var yes = rows.filter(function (x) { return x[4] === 'Y'; }).length;
-  return { sheet: name, rows: n, y: yes, n: n - yes, counts: pivot };
-}
-
-/** Ghi một bảng; trả về dòng bắt đầu của bảng kế tiếp (cách 2 dòng trống). */
-function putTable_(sh, r, title, headers, rows, bgLight, bgHead, textCols) {
-  var w = headers.length;
-  sh.getRange(r, 1, 1, w).setBackground(bgHead);
-  sh.getRange(r, 1).setValue(title).setFontWeight('bold').setFontSize(12);
-  sh.getRange(r + 1, 1, 1, w).setValues([headers]).setFontWeight('bold').setBackground(bgHead);
-  var n = rows.length;
-  if (!n) {
-    var empty = [['(Không có)']];
-    for (var i = 1; i < w; i++) empty[0].push('');
-    rows = empty; n = 1;
-  }
-  (textCols || []).forEach(function (c) { sh.getRange(r + 2, c, n, 1).setNumberFormat('@'); });   // giờ HH:mm:ss giữ dạng chữ
-  sh.getRange(r + 2, 1, n, w).setValues(rows).setBackground(bgLight);
-  return r + 2 + n + 2;
-}
-
-/**
- * TongHop_LuyKe. Số buổi đáng lẽ phải đi của một người = số ngày (đã có TH_) thuộc đợt của người đó
- * mà trường của người đó có lớp. Số buổi đi sai đợt = số ngày người đó có mặt ở một đợt khác đợt đăng ký.
- */
-function writeCumulative_(ss, roster, log) {
-  var days = thDates_(ss), cmap = classMap_(log);
-  var attended = {};
-  log.forEach(function (l) { (attended[l.id] = attended[l.id] || {})[l.date] = true; });
-  var rows = roster.map(function (p) {
-    var a = attended[p.id] || {}, cd = classDaysOf_(cmap, days, p.school, p.dot);
-    var own = 0, wrong = 0;
-    cd.forEach(function (d) { if (a[d]) own++; });
-    Object.keys(a).forEach(function (d) { var k = dotOf_(d); if (k !== OUT_OF_DOT && k !== p.dot) wrong++; });
-    return [p.id, p.name, p.school, p.khoa, p.bomon, p.dot, p.arm, p.src, own, cd.length, cd.length ? own / cd.length : '', wrong];
-  });
-  var sh = ss.getSheetByName(TAB.LUYKE) || ss.insertSheet(TAB.LUYKE);
-  sh.clear();
-  if (sh.getMaxRows() < rows.length + 1) sh.insertRowsAfter(sh.getMaxRows(), rows.length + 1 - sh.getMaxRows());
-  sh.getRange(1, 1, 1, LUYKE_HEADERS.length).setValues([LUYKE_HEADERS]).setFontWeight('bold').setBackground('#e8eaed');
-  if (rows.length) {
-    sh.getRange(2, 1, rows.length, LUYKE_HEADERS.length).setValues(rows);
-    sh.getRange(2, 11, rows.length, 1).setNumberFormat('0.0%');
-  }
-  sh.setFrozenRows(1);
-}
-
-function rebuildCumulative_() {
-  var ss = ss_();
-  writeCumulative_(ss, readRoster_(true), readLog_(ss));
+  return { sheet: name, rows: n, y: yes, n: rows.filter(function (x) { return x[4] === 'N'; }).length, counts: pivot };
 }
 
 // ===================== Admin =====================
@@ -814,12 +822,13 @@ function actionAdmin_(action, p) {
     case 'adminRemovePerson': return adminRemovePerson(str_(p.id));
     case 'adminDeleteTab': return adminDeleteTab(str_(p.name));
     case 'adminDeleteDay': return adminDeleteDay(normDate_(p.date), str_(p.confirm));
-    case 'adminRebuild': rebuildCumulative_(); return { ok: true };
-    case 'adminResyncLog': return withLock_(function () { return { ok: true, added: resyncLog_(ss_(), normDate_(p.date)).length }; });
+    case 'adminRebuild': rebuildAttendance_(); return { ok: true };
     case 'adminClearCache': return clearCache();
     case 'adminFake': return { ok: true, status: statusOf_(testMode(str_(p.value))) };
     case 'adminDebug': return adminDebug();
     case 'adminSetup': return { ok: true, log: setup() };
+    case 'adminMigrate': return migrateV3_();
+    case 'adminMigrateCleanup': return migrateV3Cleanup_(str_(p.confirm));
     default: return { ok: false, code: 'bad_request', message: 'Hành động admin không tồn tại.' };
   }
 }
@@ -852,13 +861,19 @@ function deleteRowsWhere_(sh, colIdx, pred) {
   return n;
 }
 
+/**
+ * Sau khi sửa dữ liệu của một ngày: nếu ngày đã qua (hoặc đã có BC_ của ngày đó) thì tổng hợp lại ngay;
+ * ngày hôm nay chưa tổng hợp thì để trigger 19:00 làm.
+ */
+function afterEdit_(date) {
+  if (date < nowInfo_().iso || ss_().getSheetByName(bcName_(date))) return buildDailySummary(date);
+  return { skipped: 'Ngày ' + date + ' chưa qua, sẽ tổng hợp lúc 19:00.' };
+}
+
 function adminDelete(date, id) {
   date = normDate_(date);
-  return withLock_(function () {
-    var ss = ss_();
-    var day = ss.getSheetByName('DD_' + date);
-    var nDay = deleteRowsWhere_(day, 3, function (v) { return str_(v) === id; });
-    var log = ss.getSheetByName(TAB.LOG), nLog = 0;
+  var res = withLock_(function () {
+    var ss = ss_(), log = ss.getSheetByName(TAB.LOG), nLog = 0;
     if (log && log.getLastRow() > 1) {
       var v = log.getRange(2, 2, log.getLastRow() - 1, 2).getValues();
       for (var i = v.length - 1; i >= 0; i--) {
@@ -866,8 +881,10 @@ function adminDelete(date, id) {
       }
     }
     CacheService.getScriptCache().remove('ci_' + date);
-    return { ok: true, deletedDay: nDay, deletedLog: nLog };
+    return { ok: true, deletedLog: nLog };
   });
+  if (res.deletedLog) res.summary = afterEdit_(date);
+  return res;
 }
 
 function adminCheckin(date, id) {
@@ -875,29 +892,22 @@ function adminCheckin(date, id) {
   var person = findPerson_(id, true);
   if (!person) throw new Error('Không có ID ' + id + ' trong DanhSach.');
   var now = nowInfo_();
-  var ctx = { iso: date, date: fmt_(parseFake_(date + ' 12:00'), 'dd/MM/yyyy'), dot: dotOf_(date), ts: now.ts, time: now.time };
-  return withLock_(function () {
-    var ss = ss_();
-    var res = recordCheckinLocked_(ss, person, ctx, 'admin');
-    if (res.status === 'ok') appendLog_(ss, res.row);
-    return { ok: true, status: res.status, time: res.time, date: date, dot: ctx.dot };
+  var ctx = { iso: date, date: dmyOf_(date), dot: dotOf_(date), ts: now.ts, time: now.time };
+  var res = withLock_(function () {
+    var r = recordCheckinLocked_(ss_(), person, ctx, LOG_ADMIN);
+    return { ok: true, status: r.status, time: r.time, date: date, dot: ctx.dot };
   });
+  if (res.status === 'ok') res.summary = afterEdit_(date);
+  return res;
 }
 
 function adminSummary(date) { return buildDailySummary(normDate_(date)); }
 
-/** Ghi `rows` (mảng các dòng) vào cuối sheet ở dạng chữ (giữ nguyên '2026-10-10', số 0 đầu...). */
-function putRows_(sh, rows) {
-  if (!rows.length) return;
-  var first = sh.getLastRow() + 1, need = first + rows.length - 1;
-  if (need > sh.getMaxRows()) sh.insertRowsAfter(sh.getMaxRows(), need - sh.getMaxRows());
-  sh.getRange(first, 1, rows.length, rows[0].length).setNumberFormat('@').setValues(rows);
-}
-
 /**
  * Nhập bù lượt điểm danh: items = [{date:'yyyy-MM-dd', id:'<ID học viên>'}, ...].
  * Toàn bộ yêu cầu bị từ chối nếu có ngày ngoài đợt / ID không có trong DanhSach (không ghi gì).
- * Bỏ qua lượt đã có (khóa Ngày + ID) nên chạy lại không bị trùng. Dòng ghi vào DD_ và Log với Timestamp trống, Nguon = 'Nhập bù'.
+ * Bỏ qua lượt đã có (khóa Ngày + ID) nên chạy lại không bị trùng. Dòng ghi vào Log với Timestamp trống, Nguon = 'Nhập bù'.
+ * Xong thì tổng hợp lại các ngày đã qua có thêm dữ liệu.
  */
 function adminImport(items) {
   if (typeof items === 'string') { try { items = JSON.parse(items); } catch (e) { items = null; } }
@@ -915,31 +925,36 @@ function adminImport(items) {
     clean.push({ date: date, person: byId[id] });
   });
   if (bad.length) return { ok: false, code: 'invalid', message: 'Có ' + bad.length + ' dòng không hợp lệ; chưa ghi gì.', invalid: bad.slice(0, 50) };
-  return withLock_(function () {
-    var ss = ss_(), groups = {}, res = { ok: true, received: items.length, added: 0, skipped: items.length - clean.length, byDate: {} };
-    clean.forEach(function (c) { (groups[c.date] = groups[c.date] || []).push(c.person); });
-    Object.keys(groups).sort().forEach(function (date) {
-      var day = daySheet_(ss, date, true), have = {}, rows = [], dotNow = dotOf_(date);
-      if (day.getLastRow() > 1) day.getRange(2, 3, day.getLastRow() - 1, 1).getValues().forEach(function (r) { if (str_(r[0])) have[str_(r[0])] = true; });
-      groups[date].forEach(function (p) {
-        if (have[p.id]) { res.skipped++; return; }
-        have[p.id] = true;
-        rows.push(['', date, p.id, p.name, p.school, p.khoa, p.bomon, p.dot, dotNow, p.dot === dotNow ? 1 : 0, p.arm, SRC_IMPORT, '']);
-      });
-      putRows_(day, rows);
-      resyncLog_(ss, date);        // Log được bù từ DD_ (cũng sửa luôn trường hợp lần chạy trước dừng giữa chừng)
-      CacheService.getScriptCache().remove('ci_' + date);
-      res.added += rows.length;
-      res.byDate[date] = rows.length;
+  var res = withLock_(function () {
+    var ss = ss_(), log = ss.getSheetByName(TAB.LOG), have = {}, rows = [];
+    var out = { ok: true, received: items.length, added: 0, skipped: items.length - clean.length, byDate: {} };
+    if (log.getLastRow() > 1) {
+      log.getRange(2, 2, log.getLastRow() - 1, 2).getValues().forEach(function (r) { have[cellDate_(r[0]) + '|' + str_(r[1])] = true; });
+    }
+    clean.sort(function (a, b) { return a.date < b.date ? -1 : a.date > b.date ? 1 : 0; });
+    clean.forEach(function (c) {
+      var p = c.person, dotNow = dotOf_(c.date), k = c.date + '|' + p.id;
+      out.byDate[c.date] = out.byDate[c.date] || 0;
+      if (have[k]) { out.skipped++; return; }
+      have[k] = true;
+      rows.push(['', c.date, p.id, p.name, p.school, p.khoa, p.bomon, p.dot, dotNow, p.dot === dotNow ? 1 : 0, p.arm, LOG_IMPORT]);
+      out.byDate[c.date]++;
+      out.added++;
     });
+    putRows_(log, rows);
+    Object.keys(out.byDate).forEach(function (d) { CacheService.getScriptCache().remove('ci_' + d); });
     SpreadsheetApp.flush();
-    return res;
+    return out;
   });
+  res.summaries = {};
+  Object.keys(res.byDate).sort().forEach(function (d) {
+    if (res.byDate[d] > 0) res.summaries[d] = afterEdit_(d);
+  });
+  return res;
 }
 
 function adminExport(name) {
-  if ([TAB.ROSTER, TAB.REG, TAB.LOG, TAB.LUYKE].indexOf(name) < 0 && !/^(DD|TH)_\d{4}-\d{2}-\d{2}$/.test(name) &&
-      !/^BC_\d{2}-\d{2}-\d{4}$/.test(name))
+  if ([TAB.ROSTER, TAB.LOG, TAB.SUM, TAB.ATT].indexOf(name) < 0 && !/^BC_\d{2}-\d{2}-\d{4}$/.test(name))
     throw new Error('Tab không được phép xuất: ' + name);
   var sh = ss_().getSheetByName(name);
   if (!sh) throw new Error('Không có tab ' + name);
@@ -948,29 +963,25 @@ function adminExport(name) {
 }
 
 function adminDeleteTab(name) {
-  if (!/^(TH|DD)_\d{4}-\d{2}-\d{2}$/.test(name) && !/^BC_\d{2}-\d{2}-\d{4}$/.test(name))
-    throw new Error('Chỉ được xóa tab TH_yyyy-MM-dd, DD_yyyy-MM-dd hoặc BC_dd-MM-yyyy.');
+  if (!/^BC_\d{2}-\d{2}-\d{4}$/.test(name) && !/^(TH|DD)_\d{4}-\d{2}-\d{2}$/.test(name))
+    throw new Error('Chỉ được xóa tab BC_dd-MM-yyyy (hoặc TH_/DD_ cũ).');
   return withLock_(function () {
     var ss = ss_(), sh = ss.getSheetByName(name);
     if (!sh) return { ok: true, deleted: false };
     ss.deleteSheet(sh);
-    if (name.charAt(0) === 'D') CacheService.getScriptCache().remove('ci_' + name.substring(3));
     return { ok: true, deleted: true };
   });
 }
 
-/** Xóa toàn bộ điểm danh của một ngày: tab DD_, TH_, BC_ + các dòng của ngày đó trong Log. Cần confirm='yes'. Dùng để dọn dữ liệu thử. */
+/**
+ * Xóa toàn bộ điểm danh của một ngày: các dòng của ngày đó trong Log, tab BC_ và các dòng TongHop của ngày;
+ * rồi tính lại ChuyenCan. Cần confirm='yes'. Dùng để dọn dữ liệu thử.
+ */
 function adminDeleteDay(date, confirm) {
   date = normDate_(date);
   if (confirm !== 'yes') throw new Error("Thao tác xóa cả ngày: cần thêm confirm=yes.");
-  return withLock_(function () {
-    var ss = ss_(), res = { ok: true, date: date, dayTab: false, thTab: false, bcTab: false, logRows: 0 };
-    var day = ss.getSheetByName('DD_' + date);
-    if (day) { ss.deleteSheet(day); res.dayTab = true; }
-    var th = ss.getSheetByName('TH_' + date);
-    if (th) { ss.deleteSheet(th); res.thTab = true; }
-    var bc = ss.getSheetByName(bcName_(date));
-    if (bc) { ss.deleteSheet(bc); res.bcTab = true; }
+  var res = withLock_(function () {
+    var ss = ss_(), r = { ok: true, date: date, logRows: 0 };
     var log = ss.getSheetByName(TAB.LOG);
     if (log && log.getLastRow() > 1) {
       var v = log.getRange(2, 2, log.getLastRow() - 1, 1).getValues();
@@ -980,40 +991,47 @@ function adminDeleteDay(date, confirm) {
         var end = i;
         while (i >= 0 && cellDate_(v[i][0]) === date) i--;
         log.deleteRows(i + 3, end - i);
-        res.logRows += end - i;
+        r.logRows += end - i;
       }
     }
     CacheService.getScriptCache().remove('ci_' + date);
-    if (res.thTab) rebuildCumulative_();     // số buổi của ngày đã xóa không còn được tính trong TongHop_LuyKe
-    return res;
+    return r;
   });
+  var s = buildDailySummary(date);       // không còn lượt nào -> gỡ BC_ + TongHop của ngày, tính lại ChuyenCan
+  res.removed = s.removed || null;
+  return res;
 }
 
-/** Xóa HẲN một người tự đăng ký (ID dạng TUAF-N001) khỏi mọi tab; đặt lại bộ đếm. Dùng để dọn dữ liệu thử. */
+/** Xóa HẲN một người tự đăng ký (ID dạng TUAF-N001) khỏi DanhSach và Log; đặt lại bộ đếm; tổng hợp lại các ngày bị ảnh hưởng. */
 function adminRemovePerson(id) {
   var m = /^(TUAF|TUEBA)-N\d+$/.exec(id);
   if (!m) throw new Error('Chỉ xóa được ID tự đăng ký (dạng TUAF-N001).');
-  return withLock_(function () {
-    var ss = ss_(), res = { ok: true, danhSach: 0, tuDangKy: 0, log: 0, dayTabs: 0 };
+  var dates = {};
+  var res = withLock_(function () {
+    var ss = ss_(), r = { ok: true, danhSach: 0, log: 0, counter: 0 };
     var same = function (v) { return str_(v) === id; };
-    res.danhSach = deleteRowsWhere_(ss.getSheetByName(TAB.ROSTER), 1, same);
-    res.tuDangKy = deleteRowsWhere_(ss.getSheetByName(TAB.REG), 3, same);
-    res.log = deleteRowsWhere_(ss.getSheetByName(TAB.LOG), 3, same);
-    ss.getSheets().forEach(function (s) {
-      if (/^DD_\d{4}-\d{2}-\d{2}$/.test(s.getName())) {
-        res.dayTabs += deleteRowsWhere_(s, 3, same);
-        CacheService.getScriptCache().remove('ci_' + s.getName().substring(3));
+    var log = ss.getSheetByName(TAB.LOG);
+    if (log && log.getLastRow() > 1) {
+      var v = log.getRange(2, 2, log.getLastRow() - 1, 2).getValues();
+      for (var i = v.length - 1; i >= 0; i--) {
+        if (str_(v[i][1]) === id) { dates[cellDate_(v[i][0])] = true; log.deleteRow(i + 2); r.log++; }
       }
-    });
+    }
+    r.danhSach = deleteRowsWhere_(ss.getSheetByName(TAB.ROSTER), 1, same);
+    Object.keys(dates).forEach(function (d) { CacheService.getScriptCache().remove('ci_' + d); });
     // Đặt lại bộ đếm = số lớn nhất còn lại
     var re = new RegExp('^' + m[1] + '-N(\\d+)$'), max = 0;
-    readRoster_(true).forEach(function (r) { var x = re.exec(r.id); if (x) max = Math.max(max, Number(x[1])); });
+    readRoster_(true).forEach(function (x) { var q = re.exec(x.id); if (q) max = Math.max(max, Number(q[1])); });
     if (max) props_().setProperty('NCOUNT_' + m[1], String(max)); else props_().deleteProperty('NCOUNT_' + m[1]);
     clearRosterCache_();
-    rebuildCumulative_();      // bỏ dòng của người đã xóa khỏi TongHop_LuyKe
-    res.counter = max;
-    return res;
+    r.counter = max;
+    return r;
   });
+  var ds = Object.keys(dates).sort();
+  if (ds.length) ds.forEach(function (d) { buildDailySummary(d); });
+  else withLock_(rebuildAttendance_);
+  res.resummarized = ds;
+  return res;
 }
 
 function adminDebug() {
@@ -1021,19 +1039,33 @@ function adminDebug() {
   var p = props_();
   return {
     ok: true,
-    tabs: ss.getSheets().map(function (s) { return { name: s.getName(), rows: s.getLastRow() }; }),
+    tabs: ss.getSheets().map(function (s) { return { name: s.getName(), rows: s.getLastRow(), hidden: s.isSheetHidden ? s.isSheetHidden() : false }; }),
     fakeNow: p.getProperty('FAKE_NOW') || null,
     sheetTimeZone: ss.getSpreadsheetTimeZone(),
     scriptTimeZone: TZ,
     counters: { TUAF: p.getProperty('NCOUNT_TUAF'), TUEBA: p.getProperty('NCOUNT_TUEBA') },
-    triggers: ScriptApp.getProjectTriggers().map(function (t) { return t.getHandlerFunction(); })
+    triggers: ScriptApp.getProjectTriggers().map(function (t) { return t.getHandlerFunction(); }),
+    logFormats: logFormatSample_(ss)
   };
+}
+
+/** Định dạng số của vài ô trong Log (cột Timestamp, Ngay): để kiểm tra các dòng mới có giữ dạng chữ '@' không. */
+function logFormatSample_(ss) {
+  var sh = ss.getSheetByName(TAB.LOG);
+  if (!sh) return null;
+  var last = sh.getLastRow(), out = {};
+  [2, last, last + 1, last + 2, 1000, 5000, 11999].forEach(function (r) {
+    if (r >= 1 && r <= sh.getMaxRows()) out['row' + r] = [sh.getRange(r, 1).getNumberFormat(), sh.getRange(r, 2).getNumberFormat()];
+  });
+  out.maxRows = sh.getMaxRows();
+  out.maxCols = sh.getMaxColumns();
+  return out;
 }
 
 // ===================== setup() =====================
 /**
- * Chạy MỘT LẦN từ trình soạn thảo (an toàn khi chạy lại): tạo tab, nạp danh sách
- * từ RosterData.gs, tạo trigger 19:00, tạo ADMIN_KEY (nếu chưa có).
+ * Chạy MỘT LẦN từ trình soạn thảo (an toàn khi chạy lại, không ghi đè dữ liệu): tạo tab còn thiếu, thêm cột còn thiếu
+ * cho DanhSach, nạp danh sách từ RosterData.gs, tạo trigger 19:00, tạo ADMIN_KEY (nếu chưa có), sắp xếp tab.
  */
 function setup() {
   var ss = ss_(), log = [];
@@ -1044,9 +1076,10 @@ function setup() {
     ss.setSpreadsheetTimeZone(TZ);
   }
   ensureTab_(ss, TAB.ROSTER, ROSTER_HEADERS, true, 0, log);
-  ensureTab_(ss, TAB.REG, REG_HEADERS, true, 0, log);
   ensureTab_(ss, TAB.LOG, LOG_HEADERS, true, LOG_PREALLOC_ROWS, log);
-  ensureTab_(ss, TAB.LUYKE, LUYKE_HEADERS, false, 0, log);
+  ensureTab_(ss, TAB.SUM, SUM_HEADERS, false, 0, log);
+  ensureTab_(ss, TAB.ATT, ATT_HEADERS, false, 0, log);
+  ensureRosterColumns_(ss, log);
   loadRosterData_(ss, log);
   dropDefaultTab_(ss, log);
   var n = installTrigger_();
@@ -1059,6 +1092,7 @@ function setup() {
   } else {
     log.push('ADMIN_KEY đã có – giữ nguyên.');
   }
+  arrangeTabs_(ss);
   clearRosterCache_();
   Logger.log(log.join('\n'));
   return log;
@@ -1089,13 +1123,30 @@ function ensureTab_(ss, name, headers, textFormat, minRows, log) {
   }
 }
 
+/** Thêm cột còn thiếu (So_dien_thoai, Ngay_dang_ky) vào cuối tiêu đề DanhSach; không đụng vào dữ liệu. */
+function ensureRosterColumns_(ss, log) {
+  var sh = ss.getSheetByName(TAB.ROSTER);
+  if (!sh || sh.getLastRow() === 0) return;
+  var need = ROSTER_HEADERS.length;
+  if (sh.getMaxColumns() < need) sh.insertColumnsAfter(sh.getMaxColumns(), need - sh.getMaxColumns());
+  var cur = sh.getRange(1, 1, 1, need).getValues()[0], added = [];
+  for (var i = 13; i < need; i++) {
+    if (!str_(cur[i])) {
+      sh.getRange(1, i + 1).setNumberFormat('@').setValue(ROSTER_HEADERS[i]).setFontWeight('bold').setBackground('#e8eaed');
+      sh.getRange(2, i + 1, Math.max(sh.getMaxRows() - 1, 1), 1).setNumberFormat('@');
+      added.push(ROSTER_HEADERS[i]);
+    }
+  }
+  if (log && added.length) log.push('DanhSach: thêm cột ' + added.join(', '));
+}
+
 function loadRosterData_(ss, log) {
   if (typeof ROSTER_DATA === 'undefined') throw new Error('Thiếu RosterData.gs (chạy prepare_roster.py rồi clasp push).');
   var sh = ss.getSheetByName(TAB.ROSTER);
   var have = {};
   if (sh.getLastRow() > 1) sh.getRange(2, 1, sh.getLastRow() - 1, 1).getValues().forEach(function (r) { have[str_(r[0])] = true; });
   var add = ROSTER_DATA.filter(function (r) { return !have[r[0]]; }).map(function (r) {
-    return [r[0], r[1], r[2], r[3], r[4], r[5], r[6], r[7], r[8], r[9], r[10], SRC_ORIG, noAccent_(r[4])];
+    return [r[0], r[1], r[2], r[3], r[4], r[5], r[6], r[7], r[8], r[9], r[10], SRC_ORIG, noAccent_(r[4]), '', ''];
   });
   if (add.length) {
     var first = sh.getLastRow() + 1;
