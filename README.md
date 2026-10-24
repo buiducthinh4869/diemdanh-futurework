@@ -13,10 +13,10 @@ Web điểm danh cho khóa học AI dành cho giảng viên (TUAF, TUEBA), dùng
 | Múi giờ | `Asia/Ho_Chi_Minh`; **mọi** kiểm tra ngày, giờ, trùng lặp đều do server làm, không tin giờ điện thoại |
 | Đợt 1 | 10/10/2026 – 10/11/2026 (tính cả hai đầu) |
 | Đợt 2 | 14/11/2026 – 14/12/2026 (tính cả hai đầu) |
-| Giờ mở | `[08:00, 17:00)` trong các ngày thuộc một đợt; ngoài ra trang chỉ hiện thông báo, không có ô tìm kiếm |
+| Giờ mở | Mặc định `[08:00, 17:00)`, admin có thể đổi tại `admin.html`; lịch riêng theo ngày ưu tiên hơn giờ mặc định. Chỉ mở trong các ngày thuộc một đợt; ngoài ra trang chỉ hiện thông báo, không có ô tìm kiếm |
 | Điểm danh | Tối đa 1 lần/người/ngày (khóa `Ngày + ID`), không phân buổi sáng/chiều, không có mã buổi học |
 | Đi sai đợt | Vẫn được ghi nhận, kèm cờ `Dung dot = 0` và dòng lưu ý trên màn hình |
-| Tổng hợp | Tự động 19:00 hằng ngày (Apps Script chạy trong khung 19:00–20:00): `BC_`, `TongHop`, `ChuyenCan` |
+| Tổng hợp | Tự động 17:00 hằng ngày (Apps Script chạy trong khung 17:00–18:00): `BC_`, `TongHop`, `ChuyenCan` |
 
 Người dùng tìm tên (không phân biệt hoa/thường và dấu; gõ tên, họ, mã `TUAF0012`…), chọn bằng phím ↑ ↓ + Enter hoặc chạm, xem thẻ thông tin rồi xác nhận. Người chưa có tên trong danh sách bấm *“Không tìm thấy tên của bạn?”* để tự điền (cần Họ tên, Trường, Khoa, Đợt học); hệ thống tạo mã `TUAF-N001`, `TUEBA-N001`… và điểm danh luôn.
 
@@ -28,8 +28,8 @@ Bốn tab cố định + **một** tab mỗi ngày học (cả khóa khoảng 19
 |---|---|---|
 | `DanhSach` | cố định | Danh sách học viên (master, sửa tay được), gồm cả người tự đăng ký. Cột: `ID học viên, Trường, Khoa, Đợt học, Họ và tên, Năm sinh, Giới tính, Ngạch giảng viên, Bộ môn, Ghi chú, study_arm, Nguồn` (`Danh sách gốc` / `Tự đăng ký`), `ten_khong_dau`, `So_dien_thoai`, `Ngay_dang_ky` |
 | `Log` | cố định | **Nguồn dữ liệu gốc duy nhất**: mỗi lượt điểm danh 1 dòng. Cột: `Timestamp, Ngay, ID, Ho_ten, Truong, Khoa, Bo_mon, Dot_dang_ky, Dot_hien_hanh, Dung_dot, study_arm, Nguon` (`Web` / `Admin` / `Nhập bù`) |
-| `TongHop` | cố định | Mỗi (Ngày, Trường có lớp) 1 dòng, cập nhật lúc 19:00, ngày mới nhất lên đầu |
-| `ChuyenCan` | cố định | Mỗi học viên 1 dòng, cập nhật lúc 19:00, bật sẵn bộ lọc |
+| `TongHop` | cố định | Mỗi (Ngày, Trường có lớp) 1 dòng, cập nhật lúc 17:00, ngày mới nhất lên đầu |
+| `ChuyenCan` | cố định | Mỗi học viên 1 dòng, cập nhật lúc 17:00, bật sẵn bộ lọc |
 | `BC_dd-MM-yyyy` | mỗi ngày học | Báo cáo cho lãnh đạo của ngày (xem bên dưới) |
 
 Thứ tự tab: `BC_` của ngày mới nhất, `TongHop`, `ChuyenCan`, `DanhSach`, `Log`, các `BC_` cũ hơn (ngày giảm dần), cuối cùng là tab ẩn. Tab lạ bất kỳ (ví dụ `DonVi`, `CanhBao`) bị **ẩn, không bị xóa**.
@@ -71,9 +71,9 @@ Mỗi ngày có lớp có thêm một sheet (ví dụ `BC_10-10-2026`), ghi **gi
 - Bảng đếm bên phải từ ô `N3` (`Truong` / `Count of Diem_danh`): số dòng `Y` của từng trường **có lớp** và `Grand Total` (tính cả người đi sai đợt).
 - Bảng chỉ tiêu từ ô `N9`: `Phải đi (đúng đợt)`, `Có mặt đúng đợt`, `Có mặt sai đợt`, `Vắng`, `Tỷ lệ có mặt đúng đợt`; chỉ hiện cột của trường có lớp, cột cuối là `Tổng`.
 
-## Tổng hợp lúc 19:00 và chạy bù
+## Tổng hợp lúc 17:00 và chạy bù
 
-`buildDailySummary(dateStr)` (trigger 19:00 hằng ngày gọi cho hôm nay): đọc `Log` + `DanhSach`, xác định trường có lớp, rồi (1) tạo/ghi đè `BC_dd-MM-yyyy`, (2) ghi/ghi đè các dòng của ngày đó trong `TongHop`, (3) tính lại toàn bộ `ChuyenCan`, (4) sắp xếp lại tab.
+`buildDailySummary(dateStr)` (trigger 17:00 hằng ngày gọi cho hôm nay): đọc `Log` + `DanhSach`, xác định trường có lớp, rồi (1) tạo/ghi đè `BC_dd-MM-yyyy`, (2) ghi/ghi đè các dòng của ngày đó trong `TongHop`, (3) tính lại toàn bộ `ChuyenCan`, (4) sắp xếp lại tab.
 
 Chạy bù trong trình soạn thảo Apps Script (hàm `buildDailySummary` với tham số) hoặc qua web (cần `ADMIN_KEY`):
 
@@ -168,3 +168,34 @@ apps-script/RosterData.gs                              (không có trên GitHub)
 prepare_roster.py                                      gộp 2 file Excel -> RosterData.gs
 export_danhsach.py                                     xuất DanhSach ra Excel
 ```
+
+
+## Giới hạn thiết bị và quản trị giờ (bản cập nhật)
+
+- Mỗi thiết bị/trình duyệt được ghi nhận **một người mỗi ngày** theo ngày máy chủ (giờ Việt Nam). Hôm sau được điểm danh tiếp. Chọn người khác hoặc tự đăng ký sau lượt đầu đều bị chặn ở server, trong cùng khóa `LockService`. Gửi lại cùng người trả về kết quả đã ghi, không ghi thêm dòng.
+- Trình duyệt lưu mã ngẫu nhiên trong `localStorage`; server lưu SHA-256 ở cột M (`Device_hash`) của `Log`. Không dùng địa chỉ IP để tránh chặn nhầm nhiều người chung Wi-Fi. Đổi trình duyệt, chế độ riêng tư hoặc xóa dữ liệu có thể tạo mã mới: đây là biện pháp hạn chế điểm danh hộ, không phải xác thực phần cứng tuyệt đối. Lượt cũ trước khi triển khai không có mã thiết bị và không thể truy ngược thiết bị.
+- Admin điểm danh bù không chịu giới hạn thiết bị. Xóa một lượt trong `Log` qua `adminDelete` giải phóng thiết bị của lượt đó; không có bảng khóa thiết bị tách rời.
+- Mở `admin.html`, nhập **ADMIN_KEY hiện có** trong Apps Script → Project Settings → Script Properties. Không đưa khóa vào code, URL, GitHub hoặc gửi cho người khác. Trang chỉ giữ khóa trong bộ nhớ, tải lại/đăng xuất sẽ bỏ khóa.
+- Chọn giờ mặc định hoặc một ngày học cụ thể, đặt giờ mở/đóng rồi lưu; có thể đóng cả ngày và xóa lịch riêng để trở về mặc định. Khung giờ nằm trong cùng ngày và trong hai đợt học đã cấu hình. Việc lưu giờ không tự mở rộng đợt học hay tạo buổi học mới. Website lấy lại trạng thái tối đa mỗi 60 giây; máy chủ kiểm tra lại khi ghi nhận.
+- API mới dùng **POST JSON**: `adminGetSchedule` (`key`), `adminSetSchedule` (`key`, `date` hoặc chuỗi rỗng cho mặc định, `openAt`, `closeAt`, `closed` dạng boolean). Xóa lịch riêng: `adminSetSchedule` với `date` và `reset: true`.
+- API `checkin` và `register` nay yêu cầu `deviceId` (mã ngẫu nhiên 20–80 ký tự chữ/số/gạch dưới/gạch ngang). Không dùng lại bộ nhớ đệm `reqId` cũ; tính lặp an toàn dựa trên `Log` và danh sách tự đăng ký.
+
+### Triển khai theo thứ tự
+
+1. Trong **dự án Apps Script hiện đang phục vụ URL ở config.js**, thay `Code.gs` bằng bản mới trong `apps-script/Code.gs`. Giữ nguyên `RosterData.gs`, `SHEET_ID`, `ADMIN_KEY`, dữ liệu Sheets và các file nội bộ. Không chạy `setup()` nếu không có `RosterData.gs`; cột `Device_hash` được thêm tự động khi ghi nhận lượt mới. Không ghi đè cột M nếu đang chứa dữ liệu khác.
+2. Apps Script → **Deploy → Manage deployments → Edit → Version: New version → Deploy**. Sửa deployment đang dùng để giữ nguyên URL `/exec`; không tạo Web App khác. Link `/exec` chỉ chạy API, không phải trang chỉnh sửa mã nguồn. Người triển khai cần quyền chỉnh sửa dự án Apps Script, tách biệt quyền GitHub.
+3. Kiểm tra `?action=status` trả về `openAt`/`closeAt` và thử API quản trị trên dữ liệu thử trước. Sau đó hợp nhất PR để GitHub Pages xuất bản `app.js`, `admin.html`, `admin.js`, `index.html`, `style.css`. Trong lúc cập nhật Apps Script trước giao diện, bản giao diện cũ sẽ được yêu cầu tải lại vì chưa gửi `deviceId`; nên triển khai trong thời gian nghỉ điểm danh.
+4. Mở trang quản trị, đặt giờ thử và kiểm tra trên hai thiết bị: thiết bị thứ nhất điểm danh một người, đổi tên/tải lại/tự đăng ký phải bị chặn; thiết bị thứ hai vẫn điểm danh được. Không tạo dữ liệu thử trong ngày học thật; dùng môi trường thử hoặc dọn dữ liệu thử qua API admin đã có.
+5. Trigger tổng hợp hiện có vẫn chạy 17:00–18:00. Nếu mở điểm danh sau giờ này, chạy `adminSummary` cho ngày đó sau khi kết thúc để báo cáo lấy đủ lượt muộn. Bản cập nhật này giữ lịch trigger hiện có.
+
+Kiểm tra tự động: `node --test tests/attendance.test.cjs` (Node.js 18+). Các kiểm thử dùng dịch vụ giả lập trong bộ nhớ, không gọi API sản xuất hay sửa Sheets thật.
+
+
+### Kiểm tra và triển khai bản sửa này
+
+- Chưa triển khai giới hạn thiết bị hoặc trang admin lên hệ thống thật. Cần phối hợp Apps Script và GitHub Pages trong giờ nghỉ điểm danh, giữ nguyên deployment và URL `/exec`.
+- Trong dự án Apps Script đã cập nhật riêng quy tắc Đợt 0 và `SUMMARY_HOUR = 17`; báo cáo ngày 24/10 đã chạy lại thành công. Đây chưa phải triển khai bản giới hạn thiết bị.
+- Đợt 0 trong DanhSach là quy ước loại khỏi BC_, TongHop và ChuyenCan. Log gốc vẫn giữ nguyên. Quy tắc áp dụng khi chạy tổng hợp lại, không tự thay đổi các tab BC_ lịch sử chưa được chạy lại.
+- Hiện đã có trigger mới dưới tài khoản hiện tại, chạy dailySummaryTrigger trên HEAD trong khung 17:00–18:00 GMT+7. Trigger cũ thuộc tài khoản khác, hiển thị deployment “Phiên bản 14”, vẫn còn. Chủ trigger cũ cần xóa trigger đó (hoặc cập nhật đúng bản triển khai) để chỉ còn một lịch; bản cũ có thể ghi đè báo cáo bằng quy tắc cũ. Không chạy setup() để cài thêm trigger. Chỉ cập nhật mã không tự dời các trigger đã cài.
+- Kiểm thử giờ giả lập theo từng yêu cầu bằng fake và key trên môi trường thử; không dùng adminFake/testMode toàn hệ thống khi đang phục vụ học viên thật. Không đưa ADMIN_KEY vào repo, PR, log hoặc ảnh chụp.
+- Dùng chung điện thoại: người thứ hai sẽ bị chặn sau khi người thứ nhất điểm danh trong ngày, kể cả hai người đều là học viên thật. Họ cần thiết bị khác hoặc admin ghi nhận bù; đây là giới hạn có chủ đích của yêu cầu mỗi thiết bị một lần/ngày. Đổi trình duyệt/xóa localStorage/chế độ riêng tư có thể vượt giới hạn. Người dùng chặn localStorage sẽ không điểm danh được qua web, cần admin hỗ trợ. Bản ghi cũ không có Device_hash thì không thể áp dụng hồi tố giới hạn thiết bị.

@@ -143,3 +143,11 @@ input:focus, select:focus { outline: none; border-color: var(--green); box-shado
   .kv dt { flex-basis: 34%; }
 }
 @media (prefers-reduced-motion: reduce) { .spinner { animation-duration: 2.4s; } }
+
+/* Trang quản trị */
+input[type=password], input[type=date], input[type=time] {
+  width: 100%; min-height: 54px; padding: 10px 14px; font: inherit;
+  border: 2px solid var(--line); border-radius: 12px; background: #fff; color: var(--ink);
+}
+#message { overflow-wrap: anywhere; }
+#overrides { padding-left: 22px; font-size: .95rem; }
