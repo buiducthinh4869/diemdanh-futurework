@@ -910,8 +910,25 @@ function isAdmin_(p) {
   return !!k && !!p && String(p.key || '') === k;
 }
 
+/** Thông tin đăng nhập chỉ nằm trong Script Properties, không đưa vào repo. */
+function adminLoginValid_(p) {
+  var settings = props_();
+  var username = settings.getProperty('ADMIN_USERNAME');
+  var password = settings.getProperty('ADMIN_PASSWORD');
+  if (!username || !password || !p || typeof p.password !== 'string') return false;
+  if (typeof p.username !== 'string' || p.username !== username) return false;
+  // So sánh băm với số vòng lặp cố định, không dừng sớm theo ký tự mật khẩu.
+  var expected = Utilities.computeDigest(Utilities.DigestAlgorithm.SHA_256, password);
+  var supplied = Utilities.computeDigest(Utilities.DigestAlgorithm.SHA_256, p.password);
+  var different = 0;
+  for (var i = 0; i < expected.length; i++) different |= expected[i] ^ supplied[i];
+  return different === 0;
+}
+
 function actionAdmin_(action, p) {
-  if (!isAdmin_(p)) return { ok: false, code: 'forbidden', message: 'Sai khóa quản trị.' };
+  var scheduleAction = action === 'adminGetSchedule' || action === 'adminSetSchedule';
+  if (!isAdmin_(p) && !(scheduleAction && adminLoginValid_(p)))
+    return { ok: false, code: 'forbidden', message: 'Thông tin đăng nhập không đúng hoặc chưa được cấu hình.' };
   switch (action) {
     case 'adminGetSchedule': return { ok: true, settings: attendanceSettings_(), status: statusOf_(nowInfo_()) };
     case 'adminSetSchedule': return adminSchedule_(p);

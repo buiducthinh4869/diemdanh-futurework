@@ -1,7 +1,7 @@
 (function () {
   'use strict';
   var $ = function (id) { return document.getElementById(id); };
-  var key = '', settings = null, busy = false;
+  var credentials = null, settings = null, busy = false;
   function message(text) { $('message').textContent = text; }
   async function api(body) {
     var controller = new AbortController();
@@ -9,7 +9,7 @@
     try {
       var response = await fetch(window.APP_CONFIG.API_URL, {
         method: 'POST', headers: { 'Content-Type': 'text/plain;charset=utf-8' },
-        body: JSON.stringify(Object.assign({}, body, { key: key })), signal: controller.signal
+        body: JSON.stringify(Object.assign({}, body, credentials)), signal: controller.signal
       });
       var data = await response.json();
       if (!data.ok) throw new Error(data.message || 'Máy chủ chưa hỗ trợ chức năng quản trị giờ. Cần cập nhật Apps Script.');
@@ -55,11 +55,13 @@
   $('loginForm').addEventListener('submit', function (event) {
     event.preventDefault();
     run(async function () {
-      key = $('adminKey').value;
+      credentials = { username: $('adminUsername').value.trim(), password: $('adminPassword').value };
+      $('adminPassword').value = '';
       message('Đang kiểm tra…');
-      var data = await api({ action: 'adminGetSchedule' });
+      var data;
+      try { data = await api({ action: 'adminGetSchedule' }); }
+      catch (error) { credentials = null; throw error; }
       render(data);
-      $('adminKey').value = '';
       $('loginForm').hidden = true;
       $('logout').hidden = false;
       $('settingsPanel').hidden = false;
@@ -67,7 +69,8 @@
     });
   });
   $('logout').addEventListener('click', function () {
-    key = ''; settings = null;
+    credentials = null; settings = null;
+    $('adminPassword').value = '';
     $('settingsPanel').hidden = true;
     $('logout').hidden = true;
     $('loginForm').hidden = false;

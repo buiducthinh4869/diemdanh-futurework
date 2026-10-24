@@ -11,8 +11,8 @@
   <header class="head"><h1>Quản trị giờ điểm danh</h1><p class="hint">Giờ Việt Nam (Asia/Ho_Chi_Minh)</p></header>
   <section class="card">
     <form id="loginForm">
-      <label class="fld"><span>Khóa quản trị</span><input id="adminKey" type="password" required autocomplete="off"></label>
-      <p class="hint">Dùng ADMIN_KEY hiện có trong Script Properties của dự án Apps Script. Khóa chỉ giữ trong bộ nhớ của trang này.</p>
+      <label class="fld"><span>Tên đăng nhập</span><input id="adminUsername" name="username" type="text" required autocomplete="username" value="admin"></label>
+      <label class="fld"><span>Mật khẩu</span><input id="adminPassword" name="password" type="password" required autocomplete="current-password"></label>
       <button class="btn btn-primary" type="submit">Đăng nhập</button>
     </form>
     <button class="btn btn-ghost" id="logout" hidden>Đăng xuất</button>

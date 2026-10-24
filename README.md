@@ -175,7 +175,7 @@ export_danhsach.py                                     xuất DanhSach ra Excel
 - Mỗi thiết bị/trình duyệt được ghi nhận **một người mỗi ngày** theo ngày máy chủ (giờ Việt Nam). Hôm sau được điểm danh tiếp. Chọn người khác hoặc tự đăng ký sau lượt đầu đều bị chặn ở server, trong cùng khóa `LockService`. Gửi lại cùng người trả về kết quả đã ghi, không ghi thêm dòng.
 - Trình duyệt lưu mã ngẫu nhiên trong `localStorage`; server lưu SHA-256 ở cột M (`Device_hash`) của `Log`. Không dùng địa chỉ IP để tránh chặn nhầm nhiều người chung Wi-Fi. Đổi trình duyệt, chế độ riêng tư hoặc xóa dữ liệu có thể tạo mã mới: đây là biện pháp hạn chế điểm danh hộ, không phải xác thực phần cứng tuyệt đối. Lượt cũ trước khi triển khai không có mã thiết bị và không thể truy ngược thiết bị.
 - Admin điểm danh bù không chịu giới hạn thiết bị. Xóa một lượt trong `Log` qua `adminDelete` giải phóng thiết bị của lượt đó; không có bảng khóa thiết bị tách rời.
-- Mở `admin.html`, nhập **ADMIN_KEY hiện có** trong Apps Script → Project Settings → Script Properties. Không đưa khóa vào code, URL, GitHub hoặc gửi cho người khác. Trang chỉ giữ khóa trong bộ nhớ, tải lại/đăng xuất sẽ bỏ khóa.
+- Mở `admin.html`, đăng nhập bằng tên người dùng và mật khẩu được cấu hình riêng trong Apps Script → Project Settings → Script Properties (`ADMIN_USERNAME`, `ADMIN_PASSWORD`). Trang chỉ giữ thông tin đăng nhập trong bộ nhớ, không ghi localStorage/sessionStorage; tải lại/đăng xuất sẽ bỏ thông tin này. Không đưa mật khẩu vào code, URL, GitHub hoặc PR.
 - Chọn giờ mặc định hoặc một ngày học cụ thể, đặt giờ mở/đóng rồi lưu; có thể đóng cả ngày và xóa lịch riêng để trở về mặc định. Khung giờ nằm trong cùng ngày và trong hai đợt học đã cấu hình. Việc lưu giờ không tự mở rộng đợt học hay tạo buổi học mới. Website lấy lại trạng thái tối đa mỗi 60 giây; máy chủ kiểm tra lại khi ghi nhận.
 - API mới dùng **POST JSON**: `adminGetSchedule` (`key`), `adminSetSchedule` (`key`, `date` hoặc chuỗi rỗng cho mặc định, `openAt`, `closeAt`, `closed` dạng boolean). Xóa lịch riêng: `adminSetSchedule` với `date` và `reset: true`.
 - API `checkin` và `register` nay yêu cầu `deviceId` (mã ngẫu nhiên 20–80 ký tự chữ/số/gạch dưới/gạch ngang). Không dùng lại bộ nhớ đệm `reqId` cũ; tính lặp an toàn dựa trên `Log` và danh sách tự đăng ký.
@@ -199,3 +199,15 @@ Kiểm tra tự động: `node --test tests/attendance.test.cjs` (Node.js 18+). 
 - Hiện đã có trigger mới dưới tài khoản hiện tại, chạy dailySummaryTrigger trên HEAD trong khung 17:00–18:00 GMT+7. Trigger cũ thuộc tài khoản khác, hiển thị deployment “Phiên bản 14”, vẫn còn. Chủ trigger cũ cần xóa trigger đó (hoặc cập nhật đúng bản triển khai) để chỉ còn một lịch; bản cũ có thể ghi đè báo cáo bằng quy tắc cũ. Không chạy setup() để cài thêm trigger. Chỉ cập nhật mã không tự dời các trigger đã cài.
 - Kiểm thử giờ giả lập theo từng yêu cầu bằng fake và key trên môi trường thử; không dùng adminFake/testMode toàn hệ thống khi đang phục vụ học viên thật. Không đưa ADMIN_KEY vào repo, PR, log hoặc ảnh chụp.
 - Dùng chung điện thoại: người thứ hai sẽ bị chặn sau khi người thứ nhất điểm danh trong ngày, kể cả hai người đều là học viên thật. Họ cần thiết bị khác hoặc admin ghi nhận bù; đây là giới hạn có chủ đích của yêu cầu mỗi thiết bị một lần/ngày. Đổi trình duyệt/xóa localStorage/chế độ riêng tư có thể vượt giới hạn. Người dùng chặn localStorage sẽ không điểm danh được qua web, cần admin hỗ trợ. Bản ghi cũ không có Device_hash thì không thể áp dụng hồi tố giới hạn thiết bị.
+
+
+### Đăng nhập trang quản trị bằng username/password
+
+Khi triển khai, người quản trị tự cấu hình hai Script Properties trong dự án Apps Script:
+
+| Thuộc tính | Giá trị |
+|---|---|
+| ADMIN_USERNAME | Tên đăng nhập đã thống nhất (admin) |
+| ADMIN_PASSWORD | Mật khẩu được cung cấp riêng, không đưa vào GitHub |
+
+Không cần và không được đặt mật khẩu trong config.js/admin.js/admin.html hoặc trong mô tả PR. Script Properties là cấu hình phía máy chủ; chỉ chia sẻ quyền sửa dự án với người được phép đọc cấu hình này. Mật khẩu được lưu trong Script Properties riêng tư và được so sánh bằng SHA-256 tại máy chủ; đây không phải cơ chế băm mật khẩu lưu trữ. Tài khoản username/password chỉ được gọi adminGetSchedule và adminSetSchedule qua POST. Các API quản trị dữ liệu điểm danh hiện có vẫn dùng ADMIN_KEY, không thay đổi khóa cũ. Chưa cấu hình đủ hai thuộc tính, sai tên hoặc sai mật khẩu đều bị từ chối. Không có mật khẩu mặc định trong repo.

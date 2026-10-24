@@ -137,3 +137,18 @@ test('Đợt 0 is excluded from reporting while original roster and log stay int
   assert.equal(logs.length,4);
   assert.equal(c.SUMMARY_HOUR,17);
 });
+test('username/password authenticates schedule administration only', () => {
+  const {c,properties}=fixture();
+  properties.set('ADMIN_USERNAME','admin');
+  properties.set('ADMIN_PASSWORD','example-password-for-test');
+  const credentials={username:'admin',password:'example-password-for-test'};
+  assert.equal(c.actionAdmin_('adminGetSchedule',credentials).ok,true);
+  assert.equal(c.actionAdmin_('adminSetSchedule',{...credentials,openAt:'09:00',closeAt:'16:00'}).ok,true);
+  assert.equal(c.actionAdmin_('adminGetSchedule',{...credentials,password:'wrong'}).code,'forbidden');
+  assert.equal(c.actionAdmin_('adminGetSchedule',{...credentials,username:'other'}).code,'forbidden');
+  assert.equal(c.actionAdmin_('adminGetSchedule',{username:'admin'}).code,'forbidden');
+  assert.equal(c.actionAdmin_('adminDeleteDay',credentials).code,'forbidden');
+  assert.equal(c.actionAdmin_('adminGetSchedule',{key:'test-admin'}).ok,true);
+  properties.delete('ADMIN_PASSWORD');
+  assert.equal(c.actionAdmin_('adminGetSchedule',credentials).code,'forbidden');
+});
