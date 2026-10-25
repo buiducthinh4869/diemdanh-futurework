@@ -7,7 +7,7 @@ function fixture() {
   const properties = new Map([['ADMIN_KEY', 'test-admin']]);
   const cache = new Map();
   const log = { rows: [], getLastRow() { return this.rows.length + 1; }, getLastColumn() { return 13; }, getMaxColumns() { return 26; },
-    getRange(start, col, count, width) { return { getValue: () => "Device_hash", getValues: () => this.rows.slice(start - 2, start - 2 + count).map(r => r.slice(col - 1, col - 1 + width)) }; } };
+    getRange(start, col, count, width) { return { getValue: () => "Device_hash", setValue: value => { assert.equal(locked, true); this.rows[start - 2][col - 1] = value; }, getValues: () => this.rows.slice(start - 2, start - 2 + count).map(r => r.slice(col - 1, col - 1 + width)) }; } };
   const ss = { getSheetByName: () => log };
   let locked = false;
   const c = vm.createContext({ console, Date, PropertiesService: { getScriptProperties: () => ({
@@ -77,6 +77,35 @@ test('one device cannot check in a second person; retries are idempotent even af
   assert.equal(c.actionCheckin_({id:'B',deviceId:otherDevice}).status, 'ok');
   properties.set('FAKE_NOW', '2026-10-25 10:00');
   assert.equal(c.actionCheckin_({id:'B',deviceId}).status, 'ok');
+});
+test('reopening reports the used device from Log; next day and other devices remain available', () => {
+  const { c, deviceId, otherDevice } = fixture();
+  assert.equal(c.actionStatus_({deviceId}).deviceUsed, false);
+  c.actionCheckin_({id:'A', deviceId});
+  assert.equal(c.route_({postData:{contents:JSON.stringify({action:'status',deviceId})}},true).deviceUsed,true);
+  assert.equal(c.actionStatus_({deviceId:otherDevice}).deviceUsed,false);
+  assert.equal(c.actionCheckin_({id:'B',deviceId}).code,'device_used');
+  assert.equal(c.actionStatus_({deviceId, fake:'2026-10-25 10:00',key:'test-admin'}).deviceUsed,false);
+});
+test('already-attended person also consumes the second browser without overwriting first device', () => {
+  const { c, deviceId, otherDevice, log } = fixture();
+  c.actionCheckin_({id:'A', deviceId});
+  assert.equal(c.actionCheckin_({id:'A',deviceId:otherDevice}).status,'already');
+  assert.equal(log.rows.length,1);
+  assert.equal(log.rows[0][12].split(',').length,2);
+  for (const id of [deviceId,otherDevice]) {
+    assert.equal(c.actionStatus_({deviceId:id}).deviceUsed,true);
+    assert.equal(c.actionCheckin_({id:'B',deviceId:id}).code,'device_used');
+  }
+});
+test('stale attendance cache after another project deletes Log cannot create a phantom success', () => {
+  const { c, deviceId, log } = fixture();
+  c.actionCheckin_({id:'A',deviceId});
+  log.rows.length = 0;
+  assert.equal(c.actionStatus_({deviceId}).deviceUsed,false);
+  assert.equal(c.actionCheckin_({id:'A',deviceId}).status,'ok');
+  assert.equal(log.rows.length,1);
+  assert.equal(c.actionCheckin_({id:'B',deviceId}).code,'device_used');
 });
 test('registration cannot bypass device lock or add a roster entry when rejected', () => {
   const { c, deviceId, roster, log } = fixture();

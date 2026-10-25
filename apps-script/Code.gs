@@ -67,7 +67,7 @@ function route_(e, isPost) {
     var p = params_(e, isPost);
     var a = String(p.action || '');
     isAdminCall = a.indexOf('admin') === 0;
-    if (a === 'status') out = statusOf_(nowInfo_(fakeOf_(p)));
+    if (a === 'status') out = actionStatus_(p);
     else if (a === 'roster') out = actionRoster_(p);
     else if (a === 'checkin' && isPost) out = actionCheckin_(p);
     else if (a === 'register' && isPost) out = actionRegister_(p);
@@ -369,9 +369,35 @@ function deviceOwner_(ss, iso, hash) {
   if (n < 2 || log.getLastColumn() < 13) return '';
   var rows = log.getRange(2, 1, n - 1, 13).getValues();
   for (var i = 0; i < rows.length; i++) {
-    if (cellDate_(rows[i][1]) === iso && str_(rows[i][12]) === hash) return str_(rows[i][2]);
+    if (cellDate_(rows[i][1]) === iso && str_(rows[i][12]).split(',').indexOf(hash) >= 0) return str_(rows[i][2]);
   }
   return '';
+}
+
+function actionStatus_(p) {
+  var info = nowInfo_(fakeOf_(p)), out = statusOf_(info);
+  var hash = deviceHash_(p);
+  if (hash) out.deviceUsed = !!deviceOwner_(ss_(), info.iso, hash);
+  return out;
+}
+
+// Mỗi trình duyệt đã nhận phản hồi điểm danh đều chiếm lượt trong ngày,
+// kể cả khi học viên đã được ghi nhận trước đó bằng một trình duyệt khác.
+function bindDeviceToCheckin_(log, iso, id, hash) {
+  ensureLogDeviceColumn_(log);
+  var n = log.getLastRow();
+  if (n < 2) return;
+  var rows = log.getRange(2, 1, n - 1, 13).getValues();
+  for (var i = 0; i < rows.length; i++) {
+    if (cellDate_(rows[i][1]) !== iso || str_(rows[i][2]) !== id) continue;
+    var hashes = str_(rows[i][12]) ? str_(rows[i][12]).split(',') : [];
+    if (hashes.indexOf(hash) < 0) {
+      hashes.push(hash);
+      log.getRange(i + 2, 13).setValue(hashes.join(','));
+      SpreadsheetApp.flush();
+    }
+    return;
+  }
 }
 
 function checkinResp_(person, res, ctx) {
@@ -419,9 +445,12 @@ function recordCheckinLocked_(ss, person, ctx, nguon, deviceHash) {
     if (owner && owner !== person.id) return { error: deviceError_(false) };
   }
   var log = ss.getSheetByName(TAB.LOG);
-  var set = checkedSet_(ctx.iso, log);
+  var set = checkedSet_(ctx.iso, log, true);
   // dòng nhập bù có Timestamp trống -> giờ là '' (falsy), nên kiểm tra theo sự tồn tại của khóa
-  if (hasOwn_(set, person.id)) return { status: 'already', time: set[person.id] };
+  if (hasOwn_(set, person.id)) {
+    if (nguon === LOG_WEB) bindDeviceToCheckin_(log, ctx.iso, person.id, deviceHash);
+    return { status: 'already', time: set[person.id] };
+  }
   var row = [ctx.ts, ctx.iso, person.id, person.name, person.school, person.khoa, person.bomon,
     person.dot, ctx.dot, person.dot === ctx.dot ? 1 : 0, person.arm, nguon, deviceHash || ''];
   appendLogRow_(log, row);
@@ -461,8 +490,10 @@ function putRows_(sh, rows) {
 }
 
 /** Bộ nhớ đệm {ID: 'HH:mm'} của ngày; nếu mất thì dựng lại từ Log (cột Timestamp, Ngay, ID). */
-function checkedSet_(iso, logSh) {
-  var raw = CacheService.getScriptCache().get('ci_' + iso);
+function checkedSet_(iso, logSh, force) {
+  // Các project cùng dùng Sheet có cache riêng. Ghi nhận phải đối chiếu Log,
+  // tránh trả "đã điểm danh" từ cache sau khi lượt đã bị xóa ở project khác.
+  var raw = force ? null : CacheService.getScriptCache().get('ci_' + iso);
   if (raw) { try { return JSON.parse(raw); } catch (e) { /* dựng lại */ } }
   var set = {};
   var n = logSh.getLastRow();

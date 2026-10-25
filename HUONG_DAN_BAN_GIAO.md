@@ -32,3 +32,7 @@ Giữ nguyên Sheet gốc và deployment cũ. Project Web App mới không cài 
 ## Kiểm tra
 
 Ngày 25/10/2026: action=status trả fake=false, giờ VN, lịch 08:00–17:00; action=roster đọc 335 học viên từ Sheet gốc. Kiểm tra website thật sau GitHub Pages cập nhật. Lượt thử phải dùng dữ liệu thử riêng và xóa chính xác theo ngày + ID, không xóa điểm danh học viên thật.
+
+## Bản vá khóa thiết bị khi mở lại (25/10/2026)
+
+Status nhận deviceId qua POST và chỉ trả deviceUsed, không trả danh tính người đã điểm danh. Trình duyệt đã dùng trong ngày không hiện tìm kiếm khi mở lại. Server đối chiếu Log trong khóa ghi thay vì tin cache riêng của project; phản hồi already cũng gắn hash thiết bị vào dòng hiện có. Cột M có thể chứa nhiều SHA-256 phân cách dấu phẩy khi nhiều trình duyệt gửi lại cùng học viên; mỗi hash vẫn chỉ gắn với một người/ngày. Không thêm dòng điểm danh trùng. Giới hạn vẫn theo dữ liệu trình duyệt; đổi trình duyệt/xóa dữ liệu có thể vượt. Kiểm thử hồi quy 13/13 đạt.
