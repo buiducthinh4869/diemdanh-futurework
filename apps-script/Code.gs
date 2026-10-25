@@ -13,8 +13,8 @@
  * Cấu trúc Google Sheet (v3): 4 tab cố định + 1 tab BC_dd-MM-yyyy mỗi ngày học
  *   DanhSach   danh sách học viên (master, gồm cả người tự đăng ký)
  *   Log        mọi lượt điểm danh (nguồn dữ liệu gốc duy nhất)
- *   TongHop    mỗi (Ngày, Trường có lớp) một dòng, cập nhật lúc 19:00
- *   ChuyenCan  mỗi học viên một dòng, cập nhật lúc 19:00
+ *   TongHop    mỗi (Ngày, Trường có lớp) một dòng, cập nhật lúc 17:00
+ *   ChuyenCan  mỗi học viên một dòng, cập nhật lúc 17:00
  *   BC_...     báo cáo cho lãnh đạo của ngày
  *
  * Danh sách học viên nằm trong RosterData.gs (không đưa lên GitHub) và chỉ
@@ -26,7 +26,7 @@
 var TZ = 'Asia/Ho_Chi_Minh';
 var OPEN_MIN = 8 * 60;         // 08:00 (mở)
 var CLOSE_MIN = 17 * 60;       // 17:00 (đóng, không tính 17:00)
-var SUMMARY_HOUR = 19;         // tổng hợp lúc 19:00
+var SUMMARY_HOUR = 17;         // tổng hợp lúc 17:00
 var DOTS = [
   { name: 'Đợt 1', from: '2026-10-10', to: '2026-11-10' },
   { name: 'Đợt 2', from: '2026-11-14', to: '2026-12-14' }
@@ -50,7 +50,7 @@ var BC_HEADERS = ['ID', 'Ho_ten', 'Truong', 'Ngay_hoc', 'Diem_danh', 'Dot'];
 var ROSTER_HEADERS = ['ID học viên', 'Trường', 'Khoa', 'Đợt học', 'Họ và tên', 'Năm sinh', 'Giới tính',
   'Ngạch giảng viên', 'Bộ môn', 'Ghi chú', 'study_arm', 'Nguồn', 'ten_khong_dau', 'So_dien_thoai', 'Ngay_dang_ky'];
 var LOG_HEADERS = ['Timestamp', 'Ngay', 'ID', 'Ho_ten', 'Truong', 'Khoa', 'Bo_mon', 'Dot_dang_ky',
-  'Dot_hien_hanh', 'Dung_dot', 'study_arm', 'Nguon'];
+  'Dot_hien_hanh', 'Dung_dot', 'study_arm', 'Nguon', 'Device_hash'];
 var SUM_HEADERS = ['Ngay', 'Truong', 'Dot_hien_hanh', 'Tong_phai_di', 'Co_mat', 'Co_mat_dung_dot', 'Co_mat_sai_dot',
   'Tu_dang_ky', 'Vang', 'Ty_le_co_mat_dung_dot', 'Treatment_co_mat', 'Control_co_mat', 'Control_di_dot1'];
 var ATT_HEADERS = ['ID', 'Ho_ten', 'Truong', 'Khoa', 'Dot_dang_ky', 'study_arm', 'So_buoi_phai_di', 'So_buoi_co_mat',
@@ -71,7 +71,11 @@ function route_(e, isPost) {
     else if (a === 'roster') out = actionRoster_(p);
     else if (a === 'checkin' && isPost) out = actionCheckin_(p);
     else if (a === 'register' && isPost) out = actionRegister_(p);
-    else if (isAdminCall) out = actionAdmin_(a, p);
+    else if (isAdminCall) {
+      if ((a === 'adminSetSchedule' || a === 'adminGetSchedule') && !isPost)
+        out = { ok: false, code: 'bad_request', message: 'Hãy sử dụng POST.' };
+      else out = actionAdmin_(a, p);
+    }
     else out = { ok: false, code: 'bad_request', message: 'Yêu cầu không hợp lệ.' };
   } catch (err) {
     console.error(err && err.stack ? err.stack : String(err));
@@ -138,23 +142,26 @@ function nowInfo_(fakeOverride) {
   var iso = fmt_(d, 'yyyy-MM-dd');
   var mins = Number(fmt_(d, 'H')) * 60 + Number(fmt_(d, 'm'));
   var dot = dotOf_(iso);
-  var open = dot !== OUT_OF_DOT && mins >= OPEN_MIN && mins < CLOSE_MIN;
+  var schedule = scheduleFor_(iso);
+  var opening = timeMinutes_(schedule.openAt), closing = timeMinutes_(schedule.closeAt);
+  var open = dot !== OUT_OF_DOT && !schedule.closed && mins >= opening && mins < closing;
   var message = '';
   if (!open) {
     if (dot === OUT_OF_DOT) message = 'Hiện không trong thời gian của đợt học';
-    else if (mins < OPEN_MIN) message = 'Chưa đến giờ điểm danh (mở lúc 08:00)';
-    else message = 'Đã hết giờ điểm danh hôm nay (đóng lúc 17:00)';
+    else if (schedule.closed) message = 'Admin đã đóng điểm danh ngày hôm nay';
+    else if (mins < opening) message = 'Chưa đến giờ điểm danh (mở lúc ' + schedule.openAt + ')';
+    else message = 'Đã hết giờ điểm danh hôm nay (đóng lúc ' + schedule.closeAt + ')';
   }
   return {
     epoch: d.getTime(), iso: iso, date: fmt_(d, 'dd/MM/yyyy'), time: fmt_(d, 'HH:mm'),
-    ts: fmt_(d, 'yyyy-MM-dd HH:mm:ss'), dot: dot, open: open, message: message, fake: isFake
+    ts: fmt_(d, 'yyyy-MM-dd HH:mm:ss'), dot: dot, open: open, message: message, fake: isFake, openAt: schedule.openAt, closeAt: schedule.closeAt
   };
 }
 
 function statusOf_(info) {
   return {
     ok: true, date: info.date, dateISO: info.iso, time: info.time, epoch: info.epoch,
-    dot: info.dot, open: info.open, message: info.message, openAt: '08:00', closeAt: '17:00', fake: info.fake
+    dot: info.dot, open: info.open, message: info.message, openAt: info.openAt, closeAt: info.closeAt, fake: info.fake
   };
 }
 
@@ -178,6 +185,54 @@ function sumDateIso_(v) {
   var s = str_(v), m = s.match(/^(\d{2})\/(\d{2})\/(\d{4})$/);
   if (m) return m[3] + '-' + m[2] + '-' + m[1];
   return /^\d{4}-\d{2}-\d{2}$/.test(s) ? s : '';
+}
+
+// Giờ mặc định + ngoại lệ từng ngày, lưu bền vững trong Script Properties.
+function timeMinutes_(value) {
+  if (!/^([01]\d|2[0-3]):[0-5]\d$/.test(String(value))) throw new Error('Giờ phải có dạng HH:mm (00:00–23:59).');
+  return Number(value.slice(0, 2)) * 60 + Number(value.slice(3));
+}
+function attendanceSettings_() {
+  var raw = props_().getProperty('ATTENDANCE_SETTINGS');
+  return raw ? JSON.parse(raw) : { default: { openAt: '08:00', closeAt: '17:00', closed: false }, dates: {} };
+}
+function scheduleFor_(iso) {
+  var settings = attendanceSettings_();
+  return settings.dates[iso] || settings.default;
+}
+function adminSchedule_(p) {
+  return withLock_(function () {
+    var settings = attendanceSettings_(), date = str_(p.date);
+    if (date) {
+      var parsed = parseFake_(date);
+      if (!/^\d{4}-\d{2}-\d{2}$/.test(date) || !parsed || fmt_(parsed, 'yyyy-MM-dd') !== date)
+        throw new Error('Ngày không hợp lệ.');
+    }
+    if (p.reset === true) {
+      if (!date) throw new Error('Chọn ngày cần khôi phục giờ mặc định.');
+      delete settings.dates[date];
+    } else {
+      var openAt = str_(p.openAt), closeAt = str_(p.closeAt);
+      if (timeMinutes_(openAt) >= timeMinutes_(closeAt)) throw new Error('Giờ đóng phải sau giờ mở trong cùng ngày.');
+      var schedule = { openAt: openAt, closeAt: closeAt, closed: p.closed === true };
+      if (date) settings.dates[date] = schedule; else settings.default = schedule;
+    }
+    // Không lưu ngoại lệ ngoài đợt để tránh nhầm với lịch phân đợt nghiên cứu.
+    if (date && dotOf_(date) === OUT_OF_DOT) throw new Error('Ngày này không thuộc đợt học.');
+    var encoded = JSON.stringify(settings);
+    if (encoded.length > 8000) throw new Error('Quá nhiều ngày ngoại lệ. Hãy xóa các ngày không dùng.');
+    props_().setProperty('ATTENDANCE_SETTINGS', encoded);
+    return { ok: true, settings: settings, status: statusOf_(nowInfo_()) };
+  });
+}
+function ensureLogDeviceColumn_(log) {
+  if (log.getMaxColumns() < 13) log.insertColumnsAfter(log.getMaxColumns(), 13 - log.getMaxColumns());
+  var header = str_(log.getRange(1, 13).getValue());
+  if (header && header !== 'Device_hash') throw new Error('Cột M của Log đang được sử dụng; cần kiểm tra trước khi cập nhật.');
+  if (!header) {
+    log.getRange(1, 13).setValue('Device_hash').setFontWeight('bold').setBackground('#e8eaed');
+    log.getRange(2, 13, log.getMaxRows() - 1, 1).setNumberFormat('@');
+  }
 }
 
 // ===================== Danh sách (DanhSach) =====================
@@ -297,9 +352,26 @@ function actionRoster_(p) {
   };
 }
 
-function reqCacheKey_(p) {
-  var id = str_(p.reqId).replace(/[^A-Za-z0-9_-]/g, '').substring(0, 64);
-  return id ? 'rq_' + id : '';
+// Mã ngẫu nhiên được lưu trong trình duyệt; server chỉ lưu SHA-256 trong Log.
+function deviceHash_(p) {
+  var id = str_(p.deviceId);
+  if (!/^[A-Za-z0-9_-]{20,80}$/.test(id)) return '';
+  return Utilities.computeDigest(Utilities.DigestAlgorithm.SHA_256, id)
+    .map(function (b) { return ('0' + ((b + 256) % 256).toString(16)).slice(-2); }).join('');
+}
+function deviceError_(missing) {
+  return { ok: false, code: missing ? 'device_required' : 'device_used', message: missing
+    ? 'Không xác định được thiết bị. Hãy tải lại trang và cho phép trình duyệt lưu dữ liệu.'
+    : 'Thiết bị này đã điểm danh hôm nay. Mỗi thiết bị chỉ được điểm danh một người mỗi ngày. Vui lòng liên hệ ban tổ chức nếu cần sửa.' };
+}
+function deviceOwner_(ss, iso, hash) {
+  var log = ss.getSheetByName(TAB.LOG), n = log.getLastRow();
+  if (n < 2 || log.getLastColumn() < 13) return '';
+  var rows = log.getRange(2, 1, n - 1, 13).getValues();
+  for (var i = 0; i < rows.length; i++) {
+    if (cellDate_(rows[i][1]) === iso && str_(rows[i][12]) === hash) return str_(rows[i][2]);
+  }
+  return '';
 }
 
 function checkinResp_(person, res, ctx) {
@@ -316,9 +388,8 @@ function ctxOfInfo_(info) {
 function actionCheckin_(p) {
   var info = nowInfo_(fakeOf_(p));
   if (!info.open) return closedResp_(info);
-  var cache = CacheService.getScriptCache();
-  var rk = reqCacheKey_(p);
-  if (rk) { var hit = cache.get(rk); if (hit) return JSON.parse(hit); }
+  var deviceHash = deviceHash_(p);
+  if (!deviceHash) return deviceError_(true);
   var person = findPerson_(str_(p.id), false);
   if (!person) return { ok: false, code: 'notfound', message: 'Không tìm thấy học viên này trong danh sách.' };
 
@@ -328,23 +399,31 @@ function actionCheckin_(p) {
   if (!lock.tryLock(LOCK_WAIT_MS)) return { ok: false, code: 'busy', message: 'Hệ thống đang bận, vui lòng thử lại.' };
   var ctx = ctxOfInfo_(info), res;
   try {
-    res = recordCheckinLocked_(ss, person, ctx, LOG_WEB);
+    info = nowInfo_(fakeOf_(p));
+    if (!info.open) return closedResp_(info);
+    ctx = ctxOfInfo_(info);
+    res = recordCheckinLocked_(ss, person, ctx, LOG_WEB, deviceHash);
+    if (res.error) return res.error;
   } finally {
     lock.releaseLock();
   }
   var out = checkinResp_(person, res, ctx);
-  if (rk) cache.put(rk, JSON.stringify(out), 3600);
   return out;
 }
 
 /** Gọi khi đã giữ khóa. Log là nguồn duy nhất; khóa trùng theo (Ngày, ID). */
-function recordCheckinLocked_(ss, person, ctx, nguon) {
+function recordCheckinLocked_(ss, person, ctx, nguon, deviceHash) {
+  if (nguon === LOG_WEB) {
+    if (!deviceHash) return { error: deviceError_(true) };
+    var owner = deviceOwner_(ss, ctx.iso, deviceHash);
+    if (owner && owner !== person.id) return { error: deviceError_(false) };
+  }
   var log = ss.getSheetByName(TAB.LOG);
   var set = checkedSet_(ctx.iso, log);
   // dòng nhập bù có Timestamp trống -> giờ là '' (falsy), nên kiểm tra theo sự tồn tại của khóa
   if (hasOwn_(set, person.id)) return { status: 'already', time: set[person.id] };
   var row = [ctx.ts, ctx.iso, person.id, person.name, person.school, person.khoa, person.bomon,
-    person.dot, ctx.dot, person.dot === ctx.dot ? 1 : 0, person.arm, nguon];
+    person.dot, ctx.dot, person.dot === ctx.dot ? 1 : 0, person.arm, nguon, deviceHash || ''];
   appendLogRow_(log, row);
   set[person.id] = ctx.time;
   CacheService.getScriptCache().put('ci_' + ctx.iso, JSON.stringify(set), CHECKED_TTL);
@@ -364,6 +443,7 @@ function appendTextRow_(sh, row) {
  * '2026-10-17' / '2026-10-17 09:00:00' thành kiểu ngày giờ; setValues vào ô đã đặt '@' thì giữ nguyên chữ.
  */
 function appendLogRow_(log, row) {
+  ensureLogDeviceColumn_(log);
   var r = log.getLastRow() + 1;
   if (r > log.getMaxRows()) {
     log.insertRowsAfter(log.getMaxRows(), 500);
@@ -404,9 +484,8 @@ function cleanText_(v, max) {
 function actionRegister_(p) {
   var info = nowInfo_(fakeOf_(p));
   if (!info.open) return closedResp_(info);
-  var cache = CacheService.getScriptCache();
-  var rk = reqCacheKey_(p);
-  if (rk) { var hit = cache.get(rk); if (hit) return JSON.parse(hit); }
+  var deviceHash = deviceHash_(p);
+  if (!deviceHash) return deviceError_(true);
 
   var name = cleanText_(p.name, 100);
   var school = str_(p.school);
@@ -429,7 +508,12 @@ function actionRegister_(p) {
   if (!lock.tryLock(LOCK_WAIT_MS)) return { ok: false, code: 'busy', message: 'Hệ thống đang bận, vui lòng thử lại.' };
   var ctx = ctxOfInfo_(info), person, res, created = false;
   try {
+    info = nowInfo_(fakeOf_(p));
+    if (!info.open) return closedResp_(info);
+    ctx = ctxOfInfo_(info);
     var ss = ss_();
+    ensureLogDeviceColumn_(ss.getSheetByName(TAB.LOG));
+    var owner = deviceOwner_(ss, ctx.iso, deviceHash);
     var roster = readRoster_(true);
     var unit = matchUnit_(roster, school, khoa);
     var nkey = noAccent_(name) + '|' + school + '|' + noAccent_(unit.khoa) + '|' + noAccent_(bomon) + '|' + year;
@@ -438,6 +522,7 @@ function actionRegister_(p) {
       if (r.src === SRC_SELF && (noAccent_(r.name) + '|' + r.school + '|' + noAccent_(r.khoa) + '|' +
           noAccent_(r.bomon) + '|' + r.year) === nkey) { person = r; break; }
     }
+    if (owner && (!person || owner !== person.id)) return deviceError_(false);
     if (!person) {
       if (countSelfRegToday_(roster, ctx.iso) >= MAX_SELF_REG_PER_DAY)
         return { ok: false, code: 'limit', message: 'Hôm nay đã đạt giới hạn số lượt tự đăng ký. Vui lòng liên hệ ban tổ chức.' };
@@ -449,13 +534,13 @@ function actionRegister_(p) {
       clearRosterCache_();
       created = true;
     }
-    res = recordCheckinLocked_(ss, person, ctx, LOG_WEB);
+    res = recordCheckinLocked_(ss, person, ctx, LOG_WEB, deviceHash);
+    if (res.error) return res.error;
   } finally {
     lock.releaseLock();
   }
   var out = checkinResp_(person, res, ctx);
   out.registered = created;
-  if (rk) cache.put(rk, JSON.stringify(out), 3600);
   return out;
 }
 
@@ -515,8 +600,8 @@ function arrangeTabs_(ss) {
   }
 }
 
-// ===================== Tổng hợp 19:00 =====================
-/** Trigger hằng ngày (19:00–20:00 giờ VN). */
+// ===================== Tổng hợp 17:00 =====================
+/** Trigger hằng ngày (17:00–18:00 giờ VN). */
 function dailySummaryTrigger() { return buildDailySummary(); }
 
 /**
@@ -533,6 +618,16 @@ function buildDailySummary(dateStr) {
   var lock = LockService.getScriptLock();
   if (!lock.tryLock(LOCK_WAIT_MS)) throw new Error('Hệ thống đang bận, thử lại sau.');
   try { return buildDailySummaryLocked_(dateStr, dot); } finally { lock.releaseLock(); }
+}
+
+/** Đợt 0: không thuộc mẫu báo cáo; giữ nguyên DanhSach và Log gốc. */
+function reportData_(roster, log) {
+  var excluded = {};
+  roster.forEach(function (p) { if (str_(p.dot) === 'Đợt 0') excluded[p.id] = true; });
+  return {
+    roster: roster.filter(function (p) { return !hasOwn_(excluded, p.id); }),
+    log: log.filter(function (l) { return !hasOwn_(excluded, l.id); })
+  };
 }
 
 function readLog_(ss) {
@@ -560,10 +655,11 @@ function dotNum_(name) { return name === 'Đợt 1' ? 1 : name === 'Đợt 2' ? 
 
 function buildDailySummaryLocked_(dateStr, dot) {
   var ss = ss_();
-  var roster = readRoster_(true);
+  var data = reportData_(readRoster_(true), readLog_(ss));
+  var roster = data.roster;
   var byId = {};
   roster.forEach(function (r) { byId[r.id] = r; });
-  var log = readLog_(ss);
+  var log = data.log;
 
   // Lượt điểm danh trong ngày của TUAF / TUEBA (mỗi ID một lần, lấy lần sớm nhất)
   var today = [], seen = {};
@@ -687,6 +783,9 @@ function readClassDays_(ss) {
  * trường của người đó có lớp. Số buổi sai đợt = số ngày đã tổng hợp mà người đó có mặt ở đợt khác đợt đăng ký.
  */
 function writeAttendance_(ss, roster, log) {
+  var data = reportData_(roster, log);
+  roster = data.roster;
+  log = data.log;
   var cd = readClassDays_(ss), attended = {};
   log.forEach(function (l) { (attended[l.id] = attended[l.id] || {})[l.date] = true; });
   var rows = roster.map(function (p) {
@@ -811,9 +910,28 @@ function isAdmin_(p) {
   return !!k && !!p && String(p.key || '') === k;
 }
 
+/** Thông tin đăng nhập chỉ nằm trong Script Properties, không đưa vào repo. */
+function adminLoginValid_(p) {
+  var settings = props_();
+  var username = settings.getProperty('ADMIN_USERNAME');
+  var password = settings.getProperty('ADMIN_PASSWORD');
+  if (!username || !password || !p || typeof p.password !== 'string') return false;
+  if (typeof p.username !== 'string' || p.username !== username) return false;
+  // So sánh băm với số vòng lặp cố định, không dừng sớm theo ký tự mật khẩu.
+  var expected = Utilities.computeDigest(Utilities.DigestAlgorithm.SHA_256, password);
+  var supplied = Utilities.computeDigest(Utilities.DigestAlgorithm.SHA_256, p.password);
+  var different = 0;
+  for (var i = 0; i < expected.length; i++) different |= expected[i] ^ supplied[i];
+  return different === 0;
+}
+
 function actionAdmin_(action, p) {
-  if (!isAdmin_(p)) return { ok: false, code: 'forbidden', message: 'Sai khóa quản trị.' };
+  var scheduleAction = action === 'adminGetSchedule' || action === 'adminSetSchedule';
+  if (!isAdmin_(p) && !(scheduleAction && adminLoginValid_(p)))
+    return { ok: false, code: 'forbidden', message: 'Thông tin đăng nhập không đúng hoặc chưa được cấu hình.' };
   switch (action) {
+    case 'adminGetSchedule': return { ok: true, settings: attendanceSettings_(), status: statusOf_(nowInfo_()) };
+    case 'adminSetSchedule': return adminSchedule_(p);
     case 'adminDelete': return adminDelete(normDate_(p.date), str_(p.id));
     case 'adminCheckin': return adminCheckin(normDate_(p.date), str_(p.id));
     case 'adminSummary': return adminSummary(normDate_(p.date));
@@ -863,11 +981,11 @@ function deleteRowsWhere_(sh, colIdx, pred) {
 
 /**
  * Sau khi sửa dữ liệu của một ngày: nếu ngày đã qua (hoặc đã có BC_ của ngày đó) thì tổng hợp lại ngay;
- * ngày hôm nay chưa tổng hợp thì để trigger 19:00 làm.
+ * ngày hôm nay chưa tổng hợp thì để trigger 17:00 làm.
  */
 function afterEdit_(date) {
   if (date < nowInfo_().iso || ss_().getSheetByName(bcName_(date))) return buildDailySummary(date);
-  return { skipped: 'Ngày ' + date + ' chưa qua, sẽ tổng hợp lúc 19:00.' };
+  return { skipped: 'Ngày ' + date + ' chưa qua, sẽ tổng hợp lúc 17:00.' };
 }
 
 function adminDelete(date, id) {
@@ -1065,7 +1183,7 @@ function logFormatSample_(ss) {
 // ===================== setup() =====================
 /**
  * Chạy MỘT LẦN từ trình soạn thảo (an toàn khi chạy lại, không ghi đè dữ liệu): tạo tab còn thiếu, thêm cột còn thiếu
- * cho DanhSach, nạp danh sách từ RosterData.gs, tạo trigger 19:00, tạo ADMIN_KEY (nếu chưa có), sắp xếp tab.
+ * cho DanhSach, nạp danh sách từ RosterData.gs, tạo trigger 17:00, tạo ADMIN_KEY (nếu chưa có), sắp xếp tab.
  */
 function setup() {
   var ss = ss_(), log = [];
@@ -1079,6 +1197,7 @@ function setup() {
   ensureTab_(ss, TAB.LOG, LOG_HEADERS, true, LOG_PREALLOC_ROWS, log);
   ensureTab_(ss, TAB.SUM, SUM_HEADERS, false, 0, log);
   ensureTab_(ss, TAB.ATT, ATT_HEADERS, false, 0, log);
+  ensureLogDeviceColumn_(ss.getSheetByName(TAB.LOG));
   ensureRosterColumns_(ss, log);
   loadRosterData_(ss, log);
   dropDefaultTab_(ss, log);

@@ -1,0 +1,38 @@
+<!doctype html>
+<html lang="vi">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="robots" content="noindex, nofollow">
+  <title>Quản trị điểm danh – Futurework</title>
+  <link rel="stylesheet" href="style.css">
+</head>
+<body><main class="wrap">
+  <header class="head"><h1>Quản trị giờ điểm danh</h1><p class="hint">Giờ Việt Nam (Asia/Ho_Chi_Minh)</p></header>
+  <section class="card">
+    <form id="loginForm">
+      <label class="fld"><span>Tên đăng nhập</span><input id="adminUsername" name="username" type="text" required autocomplete="username" value="admin"></label>
+      <label class="fld"><span>Mật khẩu</span><input id="adminPassword" name="password" type="password" required autocomplete="current-password"></label>
+      <button class="btn btn-primary" type="submit">Đăng nhập</button>
+    </form>
+    <button class="btn btn-ghost" id="logout" hidden>Đăng xuất</button>
+    <p id="message" role="status" aria-live="polite"></p>
+  </section>
+  <section class="card" id="settingsPanel" hidden>
+    <h2>Thiết lập thời gian</h2>
+    <p id="currentStatus" class="hint"></p>
+    <form id="scheduleForm">
+      <label class="fld"><span>Áp dụng cho</span><select id="scope"><option value="default">Giờ mặc định của các ngày học</option><option value="date">Một ngày cụ thể</option></select></label>
+      <label class="fld" id="dateWrap" hidden><span>Ngày học</span><input id="scheduleDate" type="date"></label>
+      <label class="fld"><span>Giờ mở</span><input id="openAt" type="time" required></label>
+      <label class="fld"><span>Giờ đóng</span><input id="closeAt" type="time" required></label>
+      <label class="radio"><input id="closed" type="checkbox"> Đóng điểm danh cả ngày</label>
+      <p class="hint">Giờ đóng phải sau giờ mở trong cùng ngày. Lịch riêng theo ngày được ưu tiên hơn giờ mặc định. Các đợt học hiện tại vẫn giữ nguyên.</p>
+      <button class="btn btn-primary" type="submit">Lưu thời gian</button>
+      <button class="btn btn-ghost" id="resetDate" type="button" hidden>Xóa lịch riêng, dùng giờ mặc định</button>
+    </form>
+    <h2>Lịch riêng đã đặt</h2><ul id="overrides"></ul>
+  </section>
+  <footer class="foot"><a href="index.html">← Trang điểm danh</a></footer>
+</main><script src="config.js"></script><script src="admin.js"></script></body>
+</html>

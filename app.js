@@ -11,7 +11,7 @@
   var LIMIT = 15;
 
   var st = {
-    status: null, people: null, units: null, rosterAt: 0,
+    status: null, blockedDate: '', blockedMessage: '', people: null, units: null, rosterAt: 0,
     view: '', results: [], active: -1, selected: null, busy: false, reqId: '', retry: null
   };
 
@@ -26,6 +26,21 @@
   function newReqId() {
     try { if (window.crypto && crypto.randomUUID) return crypto.randomUUID(); } catch (e) { /* dùng cách dự phòng */ }
     return 'r' + Date.now().toString(36) + Math.random().toString(36).slice(2, 10);
+  }
+  function deviceId() {
+    try {
+      var id = localStorage.getItem('fw_device_v1');
+      if (!id || !/^[A-Za-z0-9_-]{20,80}$/.test(id)) {
+        if (!window.crypto || !crypto.getRandomValues) throw new Error('crypto');
+        var bytes = new Uint8Array(24);
+        crypto.getRandomValues(bytes);
+        id = Array.from(bytes, function (b) { return ('0' + b.toString(16)).slice(-2); }).join('');
+        localStorage.setItem('fw_device_v1', id);
+      }
+      return id;
+    } catch (e) {
+      throw new Error('Cần cho phép trình duyệt lưu dữ liệu để xác định thiết bị. Vui lòng liên hệ ban tổ chức nếu không thể điểm danh.');
+    }
   }
   function el(tag, cls, text) {
     var n = document.createElement(tag);
@@ -86,8 +101,9 @@
     $('fakeBanner').hidden = !s.fake;
     var b = $('badge');
     b.className = 'badge ' + (s.open ? 'badge-open' : 'badge-closed');
-    b.textContent = s.open ? 'Đang mở điểm danh (08:00–17:00)' : 'Đang đóng';
+    b.textContent = s.open ? 'Đang mở điểm danh (' + s.openAt + '–' + s.closeAt + ')' : 'Đang đóng';
 
+    if (st.blockedDate === s.dateISO) { showClosed(st.blockedMessage); return; }
     if (!s.open) {
       // Đóng: ẩn ô tìm kiếm + nút điểm danh. Màn hình kết quả (đã điểm danh xong) được giữ lại.
       if (st.view !== 'vResult') showClosed(s.message);
@@ -253,7 +269,7 @@
     btn.disabled = true; btn.textContent = 'Đang ghi nhận…';
     var slow = setTimeout(function () { btn.textContent = 'Hệ thống đang đông, vui lòng chờ…'; }, 8000);
     try {
-      var res = await apiPost({ action: 'checkin', id: st.selected.id, reqId: st.reqId }, 5);
+      var res = await apiPost({ action: 'checkin', deviceId: deviceId(), id: st.selected.id, reqId: st.reqId }, 5);
       handleResult(res, st.selected, submitCheckin);
     } catch (e) {
       showError('Không gửi được yêu cầu (lỗi mạng). Bấm “Thử lại” để gửi lại; nếu bạn đã điểm danh trước đó, hệ thống sẽ không ghi trùng.', submitCheckin);
@@ -266,6 +282,10 @@
   function handleResult(res, person, retryFn) {
     if (res && res.ok) { showResult(res, person); return; }
     if (res && res.code === 'closed') { if (res.status) applyStatus(res.status); else showClosed(res.message); return; }
+    if (res && (res.code === 'device_used' || res.code === 'device_required')) {
+      st.blockedDate = st.status && st.status.dateISO; st.blockedMessage = res.message;
+      showClosed(res.message); return;
+    }
     var msg = (res && res.message) || 'Có lỗi xảy ra. Vui lòng thử lại.';
     if (res && (res.code === 'invalid' || res.code === 'limit') && st.view === 'vRegister') { showRegErr(msg); return; }
     showError(msg, res && res.code === 'notfound' ? resetSearch : retryFn);
@@ -342,7 +362,7 @@
     btn.disabled = true; btn.textContent = 'Đang gửi…';
     try {
       var res = await apiPost({
-        action: 'register', reqId: st.reqId, name: name, school: school, khoa: khoa, bomon: $('rBomon').value,
+        action: 'register', deviceId: deviceId(), reqId: st.reqId, name: name, school: school, khoa: khoa, bomon: $('rBomon').value,
         dot: dotEl.value, year: year, gender: $('rGender').value, rank: $('rRank').value, phone: $('rPhone').value
       }, 5);
       if (res && !res.ok && st.view === 'vRegister' && res.code !== 'closed') { btn.disabled = false; btn.textContent = 'Gửi và điểm danh'; }
@@ -358,6 +378,7 @@
   // ---------------------------------------------------------------- khởi động
   function start() {
     if (!CFG.API_URL) { showError('Chưa cấu hình địa chỉ máy chủ (config.js).', start); return; }
+    try { deviceId(); } catch (e) { showError(e.message, start); return; }
     show('vLoading');
     pollStatus();
   }
@@ -379,7 +400,6 @@
     $('btnNotFound').addEventListener('click', openRegister);
     $('btnConfirm').addEventListener('click', submitCheckin);
     $('btnNotMe').addEventListener('click', resetSearch);
-    $('btnAgain').addEventListener('click', function () { if (st.status && st.status.open) enterSearch(); else showClosed(st.status && st.status.message); });
     $('btnRetry').addEventListener('click', function () { var fn = st.retry || start; show('vLoading'); fn(); });
     $('btnRegBack').addEventListener('click', resetSearch);
     $('rSchool').addEventListener('change', fillKhoa);
