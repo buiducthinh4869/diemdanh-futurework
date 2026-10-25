@@ -83,7 +83,7 @@
   // ---------------------------------------------------------------- trạng thái mở/đóng
   async function pollStatus() {
     try {
-      var s = await apiGet({ action: 'status' }, 2);
+      var s = await apiPost({ action: 'status', deviceId: deviceId() }, 2);
       if (!s || !s.ok) throw new Error('status');
       applyStatus(s);
     } catch (e) {
@@ -103,7 +103,13 @@
     b.className = 'badge ' + (s.open ? 'badge-open' : 'badge-closed');
     b.textContent = s.open ? 'Đang mở điểm danh (' + s.openAt + '–' + s.closeAt + ')' : 'Đang đóng';
 
-    if (st.blockedDate === s.dateISO) { showClosed(st.blockedMessage); return; }
+    if (s.deviceUsed) {
+      st.blockedDate = s.dateISO;
+      st.blockedMessage = 'Thiết bị này đã điểm danh hôm nay. Mỗi thiết bị chỉ được điểm danh một người mỗi ngày. Vui lòng liên hệ ban tổ chức nếu cần sửa.';
+      if (st.view !== 'vResult') showClosed(st.blockedMessage);
+      return;
+    }
+    if (st.blockedDate === s.dateISO) { if (st.view !== 'vResult') showClosed(st.blockedMessage); return; }
     if (!s.open) {
       // Đóng: ẩn ô tìm kiếm + nút điểm danh. Màn hình kết quả (đã điểm danh xong) được giữ lại.
       if (st.view !== 'vResult') showClosed(s.message);
