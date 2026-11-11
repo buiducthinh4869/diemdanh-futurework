@@ -36,6 +36,14 @@
   <section id="vClosed" class="card center" hidden>
     <div class="big-ico" aria-hidden="true">⏰</div>
     <p id="closedMsg" class="closed-msg"></p>
+    <form id="lookupIdForm">
+      <h2>Tra cứu mã học viên</h2>
+      <p>Chỉ tra mã, không ghi điểm danh.</p>
+      <label class="fld">Họ và tên <input name="fullName" required maxlength="150"></label>
+      <label class="fld">Năm sinh <input name="birthYear" required inputmode="numeric" pattern="[0-9]{4}" maxlength="4"></label>
+      <button class="btn btn-primary" type="submit">Tra mã</button>
+      <p id="lookupIdResult" role="status"></p>
+    </form>
   </section>
 
   <!-- Lỗi kết nối -->
@@ -127,6 +135,6 @@
 <noscript><p style="padding:16px">Trang này cần bật JavaScript để điểm danh.</p></noscript>
 <script src="config.js?v=20261025-2"></script>
 <script src="search.js"></script>
-<script src="app.js?v=20261025-2"></script>
+<script src="app.js?v=20261111-lookup"></script>
 </body>
 </html>

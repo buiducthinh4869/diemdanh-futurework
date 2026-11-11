@@ -390,6 +390,19 @@
   }
 
   function bind() {
+    var lookup = $('lookupIdForm');
+    if (lookup) lookup.addEventListener('submit', async function (event) {
+      event.preventDefault();
+      var result = $('lookupIdResult'), button = lookup.querySelector('button');
+      button.disabled = true;
+      result.textContent = 'Đang tra cứu…';
+      try {
+        var response = await apiPost({action:'lookupId', name:lookup.elements.fullName.value, year:lookup.elements.birthYear.value}, 1);
+        result.textContent = response.ok ? 'Mã học viên: ' + response.id : response.message;
+      } catch (e) {
+        result.textContent = 'Không kết nối được. Vui lòng thử lại.';
+      } finally { button.disabled = false; }
+    });
     var q = $('q');
     q.addEventListener('input', onInput);
     // Focus lại (đổi cửa sổ, chụp màn hình...) chỉ mở lại danh sách nếu đang ẩn, không đặt lại dòng đang chọn.
