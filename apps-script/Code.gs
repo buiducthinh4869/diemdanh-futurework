@@ -68,7 +68,6 @@ function route_(e, isPost) {
     var a = String(p.action || '');
     isAdminCall = a.indexOf('admin') === 0;
     if (a === 'status') out = actionStatus_(p);
-    else if (a === 'lookupId' && isPost) out = lookupStudentId_(p);
     else if (a === 'roster') out = actionRoster_(p);
     else if (a === 'checkin' && isPost) out = actionCheckin_(p);
     else if (a === 'register' && isPost) out = actionRegister_(p);
@@ -145,10 +144,11 @@ function nowInfo_(fakeOverride) {
   var dot = dotOf_(iso);
   var schedule = scheduleFor_(iso);
   var opening = timeMinutes_(schedule.openAt), closing = timeMinutes_(schedule.closeAt);
-  var open = dot !== OUT_OF_DOT && !schedule.closed && mins >= opening && mins < closing;
+  var eligibleDay = dot !== OUT_OF_DOT || schedule.outsideOverride === true;
+  var open = eligibleDay && !schedule.closed && mins >= opening && mins < closing;
   var message = '';
   if (!open) {
-    if (dot === OUT_OF_DOT) message = 'Hiện không trong thời gian của đợt học';
+    if (!eligibleDay) message = 'Hiện không trong thời gian của đợt học';
     else if (schedule.closed) message = 'Admin đã đóng điểm danh ngày hôm nay';
     else if (mins < opening) message = 'Chưa đến giờ điểm danh (mở lúc ' + schedule.openAt + ')';
     else message = 'Đã hết giờ điểm danh hôm nay (đóng lúc ' + schedule.closeAt + ')';
@@ -199,7 +199,9 @@ function attendanceSettings_() {
 }
 function scheduleFor_(iso) {
   var settings = attendanceSettings_();
-  return settings.dates[iso] || settings.default;
+  var override = settings.dates[iso];
+  if (!override) return settings.default;
+  return { openAt: override.openAt, closeAt: override.closeAt, closed: override.closed, outsideOverride: true };
 }
 function adminSchedule_(p) {
   return withLock_(function () {
@@ -218,8 +220,6 @@ function adminSchedule_(p) {
       var schedule = { openAt: openAt, closeAt: closeAt, closed: p.closed === true };
       if (date) settings.dates[date] = schedule; else settings.default = schedule;
     }
-    // Không lưu ngoại lệ ngoài đợt để tránh nhầm với lịch phân đợt nghiên cứu.
-    if (date && dotOf_(date) === OUT_OF_DOT) throw new Error('Ngày này không thuộc đợt học.');
     var encoded = JSON.stringify(settings);
     if (encoded.length > 8000) throw new Error('Quá nhiều ngày ngoại lệ. Hãy xóa các ngày không dùng.');
     props_().setProperty('ATTENDANCE_SETTINGS', encoded);
@@ -404,7 +404,7 @@ function bindDeviceToCheckin_(log, iso, id, hash) {
 function checkinResp_(person, res, ctx) {
   return {
     ok: true, status: res.status, person: personOut_(person), date: ctx.date, time: res.time,
-    dotNow: ctx.dot, dotReg: person.dot, wrongDot: person.dot !== ctx.dot
+    dotNow: ctx.dot, dotReg: person.dot, wrongDot: ctx.dot !== OUT_OF_DOT && person.dot !== ctx.dot
   };
 }
 
@@ -801,7 +801,7 @@ function readClassDays_(ss) {
   if (!sh || sh.getLastRow() < 2) return out;
   sh.getRange(2, 1, sh.getLastRow() - 1, 3).getValues().forEach(function (r) {
     var iso = sumDateIso_(r[0]), sc = str_(r[1]), dot = str_(r[2]) || dotOf_(iso);
-    if (!iso || !sc) return;
+    if (!iso || !sc || dotOf_(iso) === OUT_OF_DOT) return;
     var k = sc + '|' + dot;
     (out.byKey[k] = out.byKey[k] || []).push(iso);
     (out.bySchool[sc] = out.bySchool[sc] || {})[iso] = true;
@@ -1324,18 +1324,4 @@ function installTrigger_() {
   });
   ScriptApp.newTrigger('dailySummaryTrigger').timeBased().atHour(SUMMARY_HOUR).everyDays(1).inTimezone(TZ).create();
   return ScriptApp.getProjectTriggers().filter(function (t) { return t.getHandlerFunction() === 'dailySummaryTrigger'; }).length;
-}
-
-// Read-only lookup. No attendance, course period, or device state is changed.
-function lookupStudentId_(p) {
-  var name = noAccent_(str_(p.name)).toLowerCase().trim().replace(/\s+/g, ' ');
-  var year = str_(p.year);
-  if (name.length < 3 || name.length > 150 || !/^\d{4}$/.test(year))
-    return { ok: false, message: 'Vui lòng nhập họ tên đầy đủ và năm sinh.' };
-  var matches = readRoster_(false).filter(function (r) {
-    return noAccent_(r.name).toLowerCase().trim().replace(/\s+/g, ' ') === name && str_(r.year) === year;
-  });
-  if (matches.length !== 1)
-    return { ok: false, message: 'Không xác định được một mã duy nhất. Vui lòng kiểm tra thông tin hoặc liên hệ ban tổ chức.' };
-  return { ok: true, id: matches[0].id };
 }
