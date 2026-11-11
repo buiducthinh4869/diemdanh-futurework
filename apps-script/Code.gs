@@ -68,6 +68,7 @@ function route_(e, isPost) {
     var a = String(p.action || '');
     isAdminCall = a.indexOf('admin') === 0;
     if (a === 'status') out = actionStatus_(p);
+    else if (a === 'lookupId' && isPost) out = lookupStudentId_(p);
     else if (a === 'roster') out = actionRoster_(p);
     else if (a === 'checkin' && isPost) out = actionCheckin_(p);
     else if (a === 'register' && isPost) out = actionRegister_(p);
@@ -1323,4 +1324,18 @@ function installTrigger_() {
   });
   ScriptApp.newTrigger('dailySummaryTrigger').timeBased().atHour(SUMMARY_HOUR).everyDays(1).inTimezone(TZ).create();
   return ScriptApp.getProjectTriggers().filter(function (t) { return t.getHandlerFunction() === 'dailySummaryTrigger'; }).length;
+}
+
+// Read-only lookup. No attendance, course period, or device state is changed.
+function lookupStudentId_(p) {
+  var name = noAccent_(str_(p.name)).toLowerCase().trim().replace(/\s+/g, ' ');
+  var year = str_(p.year);
+  if (name.length < 3 || name.length > 150 || !/^\d{4}$/.test(year))
+    return { ok: false, message: 'Vui lòng nhập họ tên đầy đủ và năm sinh.' };
+  var matches = readRoster_(false).filter(function (r) {
+    return noAccent_(r.name).toLowerCase().trim().replace(/\s+/g, ' ') === name && str_(r.year) === year;
+  });
+  if (matches.length !== 1)
+    return { ok: false, message: 'Không xác định được một mã duy nhất. Vui lòng kiểm tra thông tin hoặc liên hệ ban tổ chức.' };
+  return { ok: true, id: matches[0].id };
 }
